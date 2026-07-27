@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title">
+  <title id="title">Veyra</title>
+  <rect width="120" height="120" rx="24" fill="#fff7f4"/>
+  <path d="M25 28h17l18 48 18-48h17L67 94H53L25 28Z" fill="#e45726"/>
+</svg>

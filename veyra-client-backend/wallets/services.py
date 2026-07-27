@@ -45,6 +45,22 @@ def sync_wallet_for_existing_user(user, wallet_data):
     ).exclude(user=user).first()
     if address_conflict:
         raise ValidationError('Wallet address is already linked to another Veyra account.')
+    has_client_workspace = user.capabilities.filter(
+        code='CLIENT',
+        revoked_at__isnull=True,
+    ).exists()
+    existing = WalletAccount.objects.select_for_update().filter(
+        user=user,
+        blockchain=wallet_data['blockchain'],
+    ).first()
+    if existing and (
+        existing.circle_wallet_id != wallet_data['id']
+        or existing.address.lower() != wallet_data['address'].lower()
+    ):
+        raise ValidationError(
+            'This Veyra account is already linked to a different Arc wallet. '
+            'Wallet replacement requires an explicit account-recovery flow.'
+        )
     wallet, _ = WalletAccount.objects.update_or_create(
         user=user,
         blockchain=wallet_data['blockchain'],
@@ -53,6 +69,11 @@ def sync_wallet_for_existing_user(user, wallet_data):
             'wallet_set_id': wallet_data.get('walletSetId', '') or '',
             'address': wallet_data['address'].lower(),
             'account_type': wallet_data.get('accountType', 'SCA'),
+            'purpose': (
+                WalletAccount.Purpose.CLIENT_ESCROW
+                if has_client_workspace
+                else WalletAccount.Purpose.IDENTITY_ONLY
+            ),
             'status': wallet_data.get('state', 'LIVE'),
         },
     )

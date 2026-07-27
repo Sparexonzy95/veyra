@@ -14,7 +14,9 @@ import {
   CircleDollarSign,
   ExternalLink,
   Github,
+  GitPullRequest,
   Loader2,
+  Radio,
   ShieldCheck,
   UserRound,
 } from "lucide-react";
@@ -38,8 +40,8 @@ export default function JobDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
 
     try {
@@ -54,12 +56,14 @@ export default function JobDetailPage() {
           : "Job could not be loaded.",
       );
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [params.id]);
 
   useEffect(() => {
     void load();
+    const interval = window.setInterval(() => void load(true), 8000);
+    return () => window.clearInterval(interval);
   }, [load]);
 
   const activeIndex = useMemo(() => {
@@ -263,6 +267,171 @@ export default function JobDetailPage() {
               );
             })}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+            <CardTitle>Autonomous Execution</CardTitle>
+            <span className="text-sm font-medium text-muted-foreground">
+              {job.execution.assignment?.stage_label ??
+                job.execution.matching_status.replaceAll("_", " ").toLowerCase()}
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {job.execution.assignment ? (
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-xl border p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Selected agent</p>
+                <p className="mt-1 font-semibold">{job.execution.assignment.agent.name}</p>
+                <p className="mt-1 font-mono text-xs text-muted-foreground">
+                  {shortAddress(job.execution.assignment.agent.wallet_address)}
+                </p>
+              </div>
+              <div className="rounded-xl border p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Selection</p>
+                <p className="mt-1 font-semibold">
+                  1 of {job.execution.assignment.candidate_count} eligible agent{job.execution.assignment.candidate_count === 1 ? "" : "s"}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Fairness rank {job.execution.assignment.fairness_rank} · score {job.execution.assignment.matching_score}
+                </p>
+              </div>
+              <div className="rounded-xl border p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Runtime stage</p>
+                <p className="mt-1 flex items-center gap-2 font-semibold">
+                  <Radio className="h-4 w-4" /> {job.execution.assignment.stage_label}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">Attempt {job.execution.assignment.assignment_attempt}</p>
+              </div>
+              <div className="md:col-span-3 rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground">
+                {job.execution.assignment.selection_reason}
+              </div>
+              {job.execution.assignment.attention_required ? (
+                <div className="md:col-span-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                  <p className="font-semibold">Execution needs attention</p>
+                  <p className="mt-1">{job.execution.assignment.attention_message}</p>
+                  <p className="mt-2 text-xs">
+                    Runtime: {job.execution.assignment.runtime.status.replaceAll("_", " ").toLowerCase()}
+                    {job.execution.assignment.runtime.last_seen_at
+                      ? ` · Last heartbeat ${new Date(job.execution.assignment.runtime.last_seen_at).toLocaleString()}`
+                      : " · No heartbeat received"}
+                  </p>
+                </div>
+              ) : null}
+              {job.execution.assignment.independent_verifier ? (
+                <div className="md:col-span-3 grid gap-4 rounded-xl border border-primary/20 bg-primary/5 p-4 md:grid-cols-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Independent verifier agent</p>
+                    <p className="mt-1 flex items-center gap-2 font-semibold">
+                      <ShieldCheck className="h-4 w-4" />
+                      {job.execution.assignment.independent_verifier.agent.name}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Separate agent, owner, runtime identity, and signing key
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Review status</p>
+                    <p className="mt-1 font-semibold">
+                      {job.execution.assignment.independent_verifier.verdict || job.execution.assignment.independent_verifier.status}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Attempt {job.execution.assignment.independent_verifier.assignment_attempt} · {job.execution.assignment.independent_verifier.candidate_count} eligible verifier{job.execution.assignment.independent_verifier.candidate_count === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Decision rule</p>
+                    <p className="mt-1 font-semibold">CI + verifier approval</p>
+                    <p className="mt-1 text-xs text-muted-foreground">GitHub CI cannot release payment by itself.</p>
+                  </div>
+                  {job.execution.assignment.independent_verifier.summary ? (
+                    <p className="md:col-span-3 text-sm text-muted-foreground">
+                      {job.execution.assignment.independent_verifier.summary}
+                    </p>
+                  ) : null}
+                  {job.execution.assignment.independent_verifier.failure_message ? (
+                    <p className="md:col-span-3 text-sm text-destructive">
+                      {job.execution.assignment.independent_verifier.failure_message}
+                    </p>
+                  ) : null}
+                </div>
+              ) : job.execution.assignment.status === "VERIFYING" ? (
+                <div className="md:col-span-3 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                  GitHub CI is being checked and Veyra is reserving a separate verifier agent.
+                </div>
+              ) : null}
+              {job.execution.assignment.pull_request_url ? (
+                <a
+                  href={job.execution.assignment.pull_request_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="md:col-span-3 flex items-center justify-between rounded-xl border p-4 hover:border-primary/50"
+                >
+                  <span className="flex items-center gap-2 font-medium">
+                    <GitPullRequest className="h-4 w-4" /> Pull request #{job.execution.assignment.pull_request_number}
+                  </span>
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              ) : null}
+              {job.execution.assignment.failure_message ? (
+                <div className="md:col-span-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                  {job.execution.assignment.failure_message}
+                </div>
+              ) : null}
+              {job.execution.assignment.failure_history.length ? (
+                <details className="md:col-span-3 rounded-xl border bg-muted/20 p-4 text-sm">
+                  <summary className="cursor-pointer font-medium">
+                    Recovered error history
+                  </summary>
+                  <div className="mt-3 space-y-3 text-muted-foreground">
+                    {job.execution.assignment.failure_history.map((entry, index) => (
+                      <div key={`${entry.source}-${entry.stage}-${index}`}>
+                        <p className="font-medium text-foreground">
+                          {entry.source}: {entry.stage || "transient error"}
+                        </p>
+                        <p>{entry.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              ) : null}
+            </div>
+          ) : (
+            <div
+              className={`rounded-xl border p-5 text-sm ${
+                job.execution.matching_status === "PAUSED"
+                  ? "border-destructive/30 bg-destructive/5 text-destructive"
+                  : job.execution.matching_status === "RETRYING"
+                    ? "border-amber-300 bg-amber-50 text-amber-900"
+                    : "border-dashed text-muted-foreground"
+              }`}
+            >
+              <p className="font-medium capitalize">
+                {job.execution.matching_status.replaceAll("_", " ").toLowerCase()}
+              </p>
+              <p className="mt-1">{job.execution.message}</p>
+              {job.execution.matching_reason_code ? (
+                <p className="mt-2 text-xs">
+                  Reason: {job.execution.matching_reason_code.replaceAll("_", " ")}
+                </p>
+              ) : null}
+              {job.execution.matching_next_retry_at ? (
+                <p className="mt-1 text-xs">
+                  Next automatic retry:{" "}
+                  {new Date(job.execution.matching_next_retry_at).toLocaleString()}
+                </p>
+              ) : null}
+              <p className="mt-2 text-xs">
+                Execution layer: {job.execution.controller.online ? "online" : "offline"}
+                {job.execution.controller.last_cycle_started_at
+                  ? ` · Last cycle ${new Date(job.execution.controller.last_cycle_started_at).toLocaleString()}`
+                  : ""}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

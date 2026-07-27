@@ -1,85 +1,96 @@
-# Veyra Client Actor — Django + React
+# Veyra
 
-This workspace contains the complete client-actor vertical slice.
+Veyra is an Arc Testnet marketplace for funded software jobs. Its automatic
+path is:
 
 ```text
-frontend/  React + Next.js interface using the GrantFox visual system
-backend/   Django REST Framework API and Arc/Circle integration
+Create job in the frontend
+→ approve USDC and fund Arc escrow
+→ targeted receipt reconciliation
+→ strict worker eligibility and ranking
+→ on-chain claim
+→ owner-hosted agent execution and pull request
+→ independent verifier review
+→ on-chain settlement
+→ completed job
 ```
 
-GrantFox is used only as a visual reference. Veyra does not use GrantFox's Supabase, Prisma, Stellar, payout, or authentication logic.
+The control plane is Django/PostgreSQL, the client is Next.js, and agent
+runtimes are owner-hosted. Normal operation does not use a continuous Arc
+indexer, Docker, Kubernetes, Supabase, or one-off manual lifecycle commands.
 
-## 1. Backend
+## Normal Windows startup
+
+From `C:\Users\cashkink\Downloads\Veyra-backend`, open one PowerShell window
+for each long-running component:
 
 ```powershell
-cd backend
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-notepad .env
-python manage.py check
-python manage.py migrate
-python manage.py runserver localhost:8000
+.\start-backend.ps1
+.\start-frontend.ps1
+.\start-execution-layer.ps1
+.\veyra-agent-test-server\start-agent.ps1
+.\start-verifier.ps1
 ```
 
-Use the Circle API key and App ID already configured in your working Django `.env`. Do not copy that secret file into Git.
+Open `http://localhost:3000`. Keep frontend and backend browser URLs on
+`localhost`; the Veyra login is an HttpOnly cookie.
 
-## 2. Arc indexer
+The execution-layer controller owns a database lease. Starting a second copy
+is intentionally rejected with `Another execution-layer controller holds the
+active database lease.` Stop the existing controller before deliberately
+replacing it.
 
-Open another PowerShell window:
+## Agent Starter flow
 
-```powershell
-cd backend
-.\.venv\Scripts\Activate.ps1
-python manage.py index_arc_events --watch --interval 5
+An agent owner should only need to:
+
+```text
+Copy/download the Agent Starter
+→ set provider API key and model in the runtime
+→ host/start it
+→ paste its one-time veyra-connect:// link in Veyra
+→ Test & Connect
+→ complete automatic qualification
+→ become active
 ```
 
-## 3. Frontend
+Provider keys and runtime signing keys stay on the runtime. Veyra stores the
+public signing identity and a hash of the runtime credential.
 
-```powershell
-cd frontend
-Copy-Item .env.example .env.local
-notepad .env.local
-npm install
-npm run dev
-```
+## Arc RPC resilience
 
-Frontend `.env.local`:
+All blockchain operations use the shared provider pool. `ARC_RPC_URL` remains
+supported, while `ARC_RPC_URLS` accepts comma- or newline-separated endpoints.
+Every endpoint must report Arc Testnet chain ID `5042002`.
 
 ```ini
-NEXT_PUBLIC_VEYRA_API_URL=http://localhost:8000
-NEXT_PUBLIC_CIRCLE_APP_ID=your_circle_app_id
-NEXT_PUBLIC_GOOGLE_CLIENT_ID=your_google_web_client_id
-NEXT_PUBLIC_ARC_EXPLORER_URL=https://testnet.arcscan.app
+ARC_RPC_URLS=https://rpc.drpc.testnet.arc.network,https://rpc.quicknode.testnet.arc.network,https://rpc.blockdaemon.testnet.arc.network,https://rpc.testnet.arc.network
+ARC_RPC_URL=https://rpc.testnet.arc.network
 ```
 
-Open `http://localhost:3000/login`.
+Failed providers enter cooldown. Signed transactions are built once and the
+same raw transaction/hash is rebroadcast during failover.
 
-## Keep hosts consistent
+## Verification
 
-Use:
+Backend tests use isolated settings and never require permission to create a
+PostgreSQL database:
 
-```text
-Frontend: http://localhost:3000
-Backend:  http://localhost:8000
+```powershell
+cd .\veyra-client-backend
+..\.venv\Scripts\python.exe manage.py test --settings=config.test_settings --noinput
+..\.venv\Scripts\python.exe manage.py check
+..\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run
 ```
 
-Do not mix `localhost` and `127.0.0.1`; the Veyra application session is an HTTP-only browser cookie.
+Runtime and frontend:
 
-## Test flow
-
-```text
-Google or Email login
-→ Post Jobs
-→ Circle Arc SCA wallet
-→ Dashboard
-→ Create Job
-→ Review
-→ USDC approval
-→ Fund escrow
-→ Arc JobCreated confirmation
-→ Open job
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s veyra-agent-test-server -p "test_*.py"
+cd .\frontend
+npm.cmd run typecheck
+npm.cmd run build
 ```
 
-See `frontend/docs/END_TO_END_TEST.md` for the full checklist.
+Never commit `.env`, runtime identity directories, private keys, database
+credentials, or Circle/GitHub credentials.

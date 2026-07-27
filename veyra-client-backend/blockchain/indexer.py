@@ -1,3 +1,5 @@
+import logging
+
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -7,6 +9,18 @@ from blockchain.models import IndexerCursor
 from blockchain.services import bytes_json
 from jobs.models import ArcEvent, JobFundingSnapshot, Notification, VeyraJob
 from wallets.models import CircleTransaction
+
+logger = logging.getLogger(__name__)
+
+
+def _enqueue_discovered_job(job_id: int) -> None:
+    try:
+        from workers.discovery import enqueue_job_created_fast_path
+
+        enqueue_job_created_fast_path(job_id)
+    except Exception:
+        logger.exception("Worker JobCreated fast-path enqueue failed for job %s.", job_id)
+
 
 EVENTS = [
     'JobCreated', 'JobClaimed', 'WorkSubmitted', 'JobCompleted', 'JobRejected',
@@ -69,6 +83,7 @@ def apply_event(event_name, log):
                 user=snapshot.draft.client, event_type='JOB_FUNDED', title='Job funded',
                 body=f'Job {job_id} is now open to Veyra agents.', resource_type='VeyraJob', resource_id=str(job_id)
             )
+            transaction.on_commit(lambda job_id=job_id: _enqueue_discovered_job(job_id))
     else:
         job = VeyraJob.objects.filter(onchain_job_id=job_id).first()
         if not job:
@@ -130,8 +145,7 @@ def scan_once(to_block=None, chunk_size=1000):
     while start <= latest:
         end = min(start + chunk_size - 1, latest)
         for event_name in EVENTS:
-            event_class = getattr(arc.contract.events, event_name)
-            logs = event_class().get_logs(from_block=start, to_block=end)
+            logs = arc.event_logs(event_name, from_block=start, to_block=end)
             for log in logs:
                 apply_event(event_name, log)
                 count += 1

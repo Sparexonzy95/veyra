@@ -12,5 +12,9 @@ urlpatterns = [
     path('api/v1/onboarding/', include('accounts.onboarding_urls')),
     path('api/v1/client/', include('wallets.urls')),
     path('api/v1/client/', include('jobs.urls')),
+    path('api/v1/worker/onboarding/', include('workers.urls')),
+    path('api/v1/', include('workers.owner_urls')),
+    path('api/v1/agent-runtime/', include('workers.runtime_api_urls')),
     path('api/v1/webhooks/', include('wallets.webhook_urls')),
+    path('api/v1/webhooks/', include('jobs.webhook_urls')),
 ]

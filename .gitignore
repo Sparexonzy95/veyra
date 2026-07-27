@@ -42,3 +42,5 @@ Thumbs.db
 # Local archives and patch files
 *.zip
 *.sha256.txt
+_database_backups/
+veyra-client-backend/*.json

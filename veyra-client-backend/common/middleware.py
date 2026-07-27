@@ -24,6 +24,18 @@ class AllowedOriginMiddleware:
     def __call__(self, request):
         if request.method in self.MUTATING:
             origin = request.headers.get('Origin')
+            cookie_authenticated = any(
+                request.COOKIES.get(cookie_name)
+                for cookie_name in (
+                    settings.VEYRA_SESSION_COOKIE,
+                    settings.VEYRA_ONBOARDING_COOKIE,
+                )
+            )
+            if cookie_authenticated and not origin:
+                return JsonResponse(
+                    {'detail': 'Origin is required for cookie-authenticated changes.'},
+                    status=403,
+                )
             if origin and origin not in settings.VEYRA_ALLOWED_ORIGINS:
                 return JsonResponse({'detail': 'Origin is not allowed.'}, status=403)
         return self.get_response(request)

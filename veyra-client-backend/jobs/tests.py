@@ -1,12 +1,13 @@
 from datetime import timedelta
 from unittest.mock import patch
+from types import SimpleNamespace
 from django.conf import settings
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 from accounts.models import User, UserCapability
 from accounts.services import grant_client, issue_session
-from jobs.models import JobDraft
+from jobs.models import GitHubAppInstallation, GitHubRepositoryAccess, JobDraft
 from jobs.services import commitment_hash, lock_funding_snapshot
 from wallets.models import WalletAccount
 
@@ -40,6 +41,36 @@ class JobDraftApiTests(TestCase):
         raw, _ = issue_session(self.user, type('Request', (), {'headers': {}})())
         self.client = APIClient()
         self.client.cookies[settings.VEYRA_SESSION_COOKIE] = raw
+        self.client.credentials(HTTP_ORIGIN='http://localhost:3000')
+        self.github_installation = GitHubAppInstallation.objects.create(
+            client=self.user,
+            installation_id=1001,
+            account_id=77,
+            account_login='o',
+            account_type='User',
+            permissions={
+                'contents': 'write',
+                'issues': 'read',
+                'pull_requests': 'write',
+                'checks': 'read',
+            },
+            status=GitHubAppInstallation.Status.CONNECTED,
+        )
+        self.github_repository = GitHubRepositoryAccess.objects.create(
+            installation=self.github_installation,
+            github_repository_id=2001,
+            owner='o',
+            name='r',
+            full_name='o/r',
+            default_branch='main',
+            active=True,
+        )
+        token_patch = patch(
+            'jobs.views.token_for_repository',
+            return_value=SimpleNamespace(token='installation-token'),
+        )
+        token_patch.start()
+        self.addCleanup(token_patch.stop)
 
     @patch('jobs.views.fetch_issue')
     def test_create_simple_job_draft(self, fetch_issue):
@@ -74,6 +105,36 @@ class ClientFundingApiFlowTests(TestCase):
         raw, _ = issue_session(self.user, type('Request', (), {'headers': {}})())
         self.client = APIClient()
         self.client.cookies[settings.VEYRA_SESSION_COOKIE] = raw
+        self.client.credentials(HTTP_ORIGIN='http://localhost:3000')
+        self.github_installation = GitHubAppInstallation.objects.create(
+            client=self.user,
+            installation_id=1001,
+            account_id=77,
+            account_login='o',
+            account_type='User',
+            permissions={
+                'contents': 'write',
+                'issues': 'read',
+                'pull_requests': 'write',
+                'checks': 'read',
+            },
+            status=GitHubAppInstallation.Status.CONNECTED,
+        )
+        self.github_repository = GitHubRepositoryAccess.objects.create(
+            installation=self.github_installation,
+            github_repository_id=2001,
+            owner='o',
+            name='r',
+            full_name='o/r',
+            default_branch='main',
+            active=True,
+        )
+        token_patch = patch(
+            'jobs.views.token_for_repository',
+            return_value=SimpleNamespace(token='installation-token'),
+        )
+        token_patch.start()
+        self.addCleanup(token_patch.stop)
         self.circle_user_token = 'u' * 40
 
     @patch('jobs.views.fetch_issue')

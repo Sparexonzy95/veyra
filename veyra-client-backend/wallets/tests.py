@@ -1,9 +1,11 @@
 from unittest.mock import patch
 from django.conf import settings
 from django.test import TestCase, override_settings
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
-from accounts.models import PendingCircleAuth, UserCapability
+from accounts.models import PendingCircleAuth, User, UserCapability
 from accounts.services import create_pending_circle_auth
+from wallets.services import sync_wallet_for_existing_user
 from wallets.models import WalletAccount
 
 @override_settings(CIRCLE_API_KEY='test-key')
@@ -21,6 +23,7 @@ class WalletProvisioningTests(TestCase):
         pending.requested_capability = 'CLIENT'
         pending.save(update_fields=['requested_capability'])
         self.client.cookies[settings.VEYRA_ONBOARDING_COOKIE] = raw
+        self.client.credentials(HTTP_ORIGIN='http://localhost:3000')
 
     @patch('wallets.views.CircleClient.list_wallets')
     def test_sync_binds_wallet_and_creates_client(self, list_wallets):
@@ -43,6 +46,40 @@ class WalletProvisioningTests(TestCase):
         self.assertEqual(wallet.account_type, 'SCA')
         self.assertTrue(UserCapability.objects.filter(user=wallet.user, code='CLIENT').exists())
         self.assertIn(settings.VEYRA_SESSION_COOKIE, response.cookies)
+
+    def test_existing_arc_wallet_cannot_be_silently_replaced(self):
+        user = User.objects.create_user(handle='wallet-owner')
+        WalletAccount.objects.create(
+            user=user,
+            circle_wallet_id='wallet-original',
+            wallet_set_id='set-original',
+            address='0x2222222222222222222222222222222222222222',
+            blockchain='ARC-TESTNET',
+            purpose=WalletAccount.Purpose.CLIENT_ESCROW,
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            'Wallet replacement requires an explicit account-recovery flow.',
+        ):
+            sync_wallet_for_existing_user(
+                user,
+                {
+                    'id': 'wallet-replacement',
+                    'walletSetId': 'set-replacement',
+                    'address': '0x3333333333333333333333333333333333333333',
+                    'blockchain': 'ARC-TESTNET',
+                    'accountType': 'SCA',
+                    'state': 'LIVE',
+                },
+            )
+
+        wallet = WalletAccount.objects.get(user=user, blockchain='ARC-TESTNET')
+        self.assertEqual(wallet.circle_wallet_id, 'wallet-original')
+        self.assertEqual(
+            wallet.address,
+            '0x2222222222222222222222222222222222222222',
+        )
 
 from datetime import timedelta
 from unittest.mock import MagicMock

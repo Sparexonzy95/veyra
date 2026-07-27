@@ -1,6 +1,7 @@
 "use client";
 
 import { useVeyra } from "@/components/providers/veyra-provider";
+import { GitHubAppConnection } from "@/components/jobs/github-app-connection";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,7 +18,10 @@ import { apiFetch, patchJson, postJson } from "@/lib/api";
 import type {
   CircleChallengeResponse,
   CircleTransactionStatus,
+  GitHubConnectionStatus,
+  GitHubIssueListItem,
   GitHubIssuePreview,
+  GitHubRepositoryIssueList,
   JobDraft,
   RepositoryStackItem,
   TechnicalRequirement,
@@ -38,7 +42,7 @@ import {
   Users,
   WalletCards,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type Step = "details" | "review" | "funding" | "success";
@@ -180,6 +184,13 @@ export function CreateJobDialog({
   const [step, setStep] = useState<Step>("details");
   const [draft, setDraft] = useState<JobDraft | null>(null);
   const [preview, setPreview] = useState<GitHubIssuePreview | null>(null);
+  const [githubConnection, setGithubConnection] = useState<GitHubConnectionStatus | null>(null);
+  const [selectedRepositoryId, setSelectedRepositoryId] = useState("");
+  const [repositoryIssues, setRepositoryIssues] = useState<GitHubIssueListItem[]>([]);
+  const [selectedIssueUrl, setSelectedIssueUrl] = useState("");
+  const [issueSearch, setIssueSearch] = useState("");
+  const [issuesLoading, setIssuesLoading] = useState(false);
+  const [manualIssueMode, setManualIssueMode] = useState(false);
 
   const [githubUrl, setGithubUrl] = useState("");
   const [jobTitle, setJobTitle] = useState("");
@@ -227,6 +238,16 @@ export function CreateJobDialog({
   const requiredSkills = activeRequirements.filter(
     (item) => item.level === "REQUIRED",
   );
+  const filteredRepositoryIssues = useMemo(() => {
+    const query = issueSearch.trim().toLowerCase();
+    if (!query) return repositoryIssues;
+    return repositoryIssues.filter(
+      (item) =>
+        item.title.toLowerCase().includes(query) ||
+        String(item.number).includes(query) ||
+        item.labels.some((label) => label.toLowerCase().includes(query)),
+    );
+  }, [issueSearch, repositoryIssues]);
   const numericBalance = walletBalance === null ? null : Number(walletBalance);
   const numericBudget = Number(budget || 0);
   const hasEnoughBalance =
@@ -237,6 +258,70 @@ export function CreateJobDialog({
     numericBalance !== null && Number.isFinite(numericBalance)
       ? Math.max(0, numericBudget - numericBalance)
       : null;
+
+  const handleGitHubStatus = useCallback((status: GitHubConnectionStatus | null) => {
+    setGithubConnection(status);
+  }, []);
+
+  const loadRepositoryIssues = useCallback(async (repositoryId: string) => {
+    if (!repositoryId) {
+      setRepositoryIssues([]);
+      return;
+    }
+
+    setIssuesLoading(true);
+    try {
+      const result = await apiFetch<GitHubRepositoryIssueList>(
+        `/api/v1/client/github/app/repositories/${repositoryId}/issues/?state=open`,
+      );
+      setRepositoryIssues(result.issues);
+      setSelectedIssueUrl((current) =>
+        result.issues.some((issue) => issue.html_url === current) ? current : "",
+      );
+    } catch (issueError) {
+      setRepositoryIssues([]);
+      toast.error(
+        issueError instanceof Error
+          ? issueError.message
+          : "GitHub issues could not be loaded.",
+      );
+    } finally {
+      setIssuesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const repositories = githubConnection?.repositories ?? [];
+    if (!open || !repositories.length) {
+      setSelectedRepositoryId("");
+      setRepositoryIssues([]);
+      return;
+    }
+
+    setSelectedRepositoryId((current) => {
+      if (current && repositories.some((item) => item.id === current)) {
+        return current;
+      }
+      const matchingPreview = preview
+        ? repositories.find(
+            (item) =>
+              item.owner.toLowerCase() === preview.repository_owner.toLowerCase() &&
+              item.name.toLowerCase() === preview.repository_name.toLowerCase(),
+          )
+        : null;
+      return matchingPreview?.id ?? repositories[0].id;
+    });
+  }, [
+    githubConnection?.repositories,
+    open,
+    preview?.repository_name,
+    preview?.repository_owner,
+  ]);
+
+  useEffect(() => {
+    if (!open || !selectedRepositoryId) return;
+    void loadRepositoryIssues(selectedRepositoryId);
+  }, [loadRepositoryIssues, open, selectedRepositoryId]);
 
   useEffect(() => {
     if (!open) return;
@@ -261,6 +346,9 @@ export function CreateJobDialog({
         repository_stack: stack,
       });
       setGithubUrl(initialDraft.github_issue_url);
+      setSelectedIssueUrl(initialDraft.github_issue_url);
+      setManualIssueMode(false);
+      setIssueSearch("");
       setJobTitle(advanced.job_title ?? initialDraft.issue_title);
       setJobType(advanced.job_type ?? inferWorkType(initialDraft.issue_title));
       setJobDescription(
@@ -297,6 +385,9 @@ export function CreateJobDialog({
     setDraft(null);
     setPreview(null);
     setGithubUrl("");
+    setSelectedIssueUrl("");
+    setIssueSearch("");
+    setManualIssueMode(false);
     setJobTitle("");
     setJobType("FEATURE");
     setJobDescription("");
@@ -328,14 +419,18 @@ export function CreateJobDialog({
       .catch(() => setWalletBalance(null));
   }, [circleToken, open]);
 
-  async function loadIssue() {
+  async function loadIssue(issueUrl = githubUrl) {
+    const normalizedUrl = issueUrl.trim();
+    if (!normalizedUrl) return;
+
     setLoading(true);
     setError(null);
+    setGithubUrl(normalizedUrl);
 
     try {
       const result = await postJson<GitHubIssuePreview>(
         "/api/v1/client/github/issue-preview/",
-        { github_issue_url: githubUrl },
+        { github_issue_url: normalizedUrl },
       );
       const stack = result.repository_stack ?? [];
 
@@ -412,7 +507,8 @@ export function CreateJobDialog({
   }
 
   function validationError() {
-    if (!preview) return "Load a public GitHub issue first.";
+    if (!githubConnection?.connected) return "Connect the repository through the Veyra GitHub App first.";
+    if (!preview) return "Load a GitHub issue from an approved repository first.";
     if (!jobTitle.trim()) return "Add a clear job title.";
     if (!jobDescription.trim()) return "Add a short job description.";
     if (!requiredSkills.length) {
@@ -424,9 +520,9 @@ export function CreateJobDialog({
     if (Number(budget) < 1) return "The minimum budget is 1 USDC.";
     if (
       !deadline ||
-      new Date(deadline).getTime() <= Date.now() + 10 * 60 * 1000
+      new Date(deadline).getTime() <= Date.now() + 15 * 60 * 1000
     ) {
-      return "Choose a deadline at least 10 minutes from now.";
+      return "Choose a deadline at least 15 minutes from now so automatic matching has enough time.";
     }
     if (!newlineList(requiredCommands).length) {
       return "Veyra could not detect how to check this job. Add a validation command in Advanced job settings.";
@@ -726,31 +822,141 @@ export function CreateJobDialog({
                   <h3 className="font-semibold">1. GitHub task</h3>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Paste a public GitHub issue. Veyra will read the repository,
-                  task and testing setup.
+                  Choose an approved repository and select one of its open GitHub issues.
+                  Veyra will prepare the technical details automatically.
                 </p>
 
-                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                  <Input
-                    aria-label="GitHub Issue URL"
-                    placeholder="https://github.com/owner/repository/issues/1"
-                    value={githubUrl}
-                    onChange={(event) => setGithubUrl(event.target.value)}
+                <div className="mt-4">
+                  <GitHubAppConnection
+                    compact
+                    returnPath="/dashboard/jobs?github=connected"
+                    onStatusChange={handleGitHubStatus}
                   />
-                  <Button
-                    variant="outline"
-                    onClick={() => void loadIssue()}
-                    disabled={!githubUrl.trim() || loading}
-                    className="shrink-0"
-                  >
-                    {loading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Github className="h-4 w-4" />
-                    )}
-                    Load Issue
-                  </Button>
                 </div>
+
+                {githubConnection?.connected ? (
+                  <div className="mt-4 grid gap-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="grid gap-2">
+                        <Label htmlFor="github-repository">Repository</Label>
+                        <select
+                          id="github-repository"
+                          className={selectClass}
+                          value={selectedRepositoryId}
+                          onChange={(event) => {
+                            setSelectedRepositoryId(event.target.value);
+                            setSelectedIssueUrl("");
+                            setGithubUrl("");
+                            setPreview(null);
+                            setIssueSearch("");
+                          }}
+                          disabled={issuesLoading || loading}
+                        >
+                          {(githubConnection.repositories ?? []).map((repository) => (
+                            <option key={repository.id} value={repository.id}>
+                              {repository.full_name}
+                              {repository.private ? " · Private" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="github-issue-search">Search open issues</Label>
+                        <Input
+                          id="github-issue-search"
+                          placeholder="Search by title, number, or label"
+                          value={issueSearch}
+                          onChange={(event) => setIssueSearch(event.target.value)}
+                          disabled={issuesLoading || !repositoryIssues.length}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="github-issue">Open issue</Label>
+                      <select
+                        id="github-issue"
+                        className={selectClass}
+                        value={selectedIssueUrl}
+                        onChange={(event) => {
+                          setSelectedIssueUrl(event.target.value);
+                          setGithubUrl(event.target.value);
+                        }}
+                        disabled={issuesLoading || !filteredRepositoryIssues.length}
+                      >
+                        <option value="">
+                          {issuesLoading
+                            ? "Loading open issues…"
+                            : filteredRepositoryIssues.length
+                              ? "Select an issue"
+                              : "No open issues found"}
+                        </option>
+                        {filteredRepositoryIssues.map((issue) => (
+                          <option key={issue.html_url} value={issue.html_url}>
+                            #{issue.number} · {issue.title}
+                          </option>
+                        ))}
+                      </select>
+
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs text-muted-foreground">
+                          {issuesLoading
+                            ? "Checking GitHub…"
+                            : `${filteredRepositoryIssues.length} open issue${
+                                filteredRepositoryIssues.length === 1 ? "" : "s"
+                              } shown`}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setManualIssueMode((current) => !current)}
+                          >
+                            {manualIssueMode ? "Hide URL option" : "Paste issue URL instead"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void loadIssue(selectedIssueUrl)}
+                            disabled={!selectedIssueUrl || loading}
+                          >
+                            {loading ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Github className="h-4 w-4" />
+                            )}
+                            Use selected issue
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {manualIssueMode ? (
+                      <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3 sm:flex-row">
+                        <Input
+                          aria-label="GitHub Issue URL"
+                          placeholder="https://github.com/owner/repository/issues/1"
+                          value={githubUrl}
+                          onChange={(event) => {
+                            setGithubUrl(event.target.value);
+                            setSelectedIssueUrl("");
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void loadIssue(githubUrl)}
+                          disabled={!githubUrl.trim() || loading}
+                          className="shrink-0"
+                        >
+                          Load issue URL
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 {preview ? (
                   <div className="mt-4 rounded-lg border bg-muted/20 p-4">

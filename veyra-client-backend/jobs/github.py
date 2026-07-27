@@ -2,6 +2,7 @@ import base64
 import json
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from django.conf import settings
@@ -32,13 +33,14 @@ def parse_issue_url(url: str):
     return data
 
 
-def _github_headers() -> dict[str, str]:
+def _github_headers(token: str | None = None) -> dict[str, str]:
     headers = {
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
     }
-    if settings.GITHUB_TOKEN:
-        headers['Authorization'] = f'Bearer {settings.GITHUB_TOKEN}'
+    selected_token = str(token or settings.GITHUB_TOKEN or '').strip()
+    if selected_token:
+        headers['Authorization'] = f'Bearer {selected_token}'
     return headers
 
 
@@ -51,7 +53,13 @@ def _clean_version(value: str | None) -> str:
 def _manifest_text(client: httpx.Client, item: dict[str, Any]) -> str:
     download_url = item.get('download_url')
     if download_url:
-        response = client.get(download_url, timeout=12)
+        parsed = urlparse(str(download_url))
+        if parsed.scheme != 'https' or parsed.hostname not in {
+            'raw.githubusercontent.com',
+            'github.com',
+        }:
+            return ''
+        response = client.get(download_url, timeout=12, follow_redirects=False)
         if response.is_success:
             return response.text
 
@@ -319,9 +327,9 @@ def _extract_required_commands(
     }
 
 
-def fetch_issue(url: str):
+def fetch_issue(url: str, *, token: str | None = None):
     parsed = parse_issue_url(url)
-    headers = _github_headers()
+    headers = _github_headers(token)
     api_root = settings.GITHUB_API_URL.rstrip('/')
 
     try:
