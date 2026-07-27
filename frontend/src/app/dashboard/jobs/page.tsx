@@ -85,8 +85,8 @@ export default function JobsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div><h1 className="text-2xl font-bold tracking-tight">My Jobs</h1><p className="text-muted-foreground">Create, fund and track GitHub work.</p></div>
+      <div className="flex flex-col justify-between gap-5 border-b pb-6 sm:flex-row sm:items-end">
+        <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Work pipeline</p><h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Jobs</h1><p className="mt-1.5 text-sm text-muted-foreground">Create, fund and follow every GitHub job.</p></div>
         <Button onClick={openNew}><Plus className="h-4 w-4" /> Create Job</Button>
       </div>
 
@@ -97,8 +97,8 @@ export default function JobsPage() {
             <TabsTrigger value="ALL">All</TabsTrigger>
             <TabsTrigger value="DRAFTS">Drafts</TabsTrigger>
             <TabsTrigger value="OPEN">Open</TabsTrigger>
-            <TabsTrigger value="AGENT_WORKING">In Progress</TabsTrigger>
-            <TabsTrigger value="UNDER_REVIEW">Reviewing</TabsTrigger>
+              <TabsTrigger value="AGENT_WORKING">Agent working</TabsTrigger>
+              <TabsTrigger value="UNDER_REVIEW">Under review</TabsTrigger>
             <TabsTrigger value="COMPLETED">Completed</TabsTrigger>
             <TabsTrigger value="REFUNDED">Refunded</TabsTrigger>
           </TabsList>

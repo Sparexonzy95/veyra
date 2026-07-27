@@ -212,13 +212,11 @@ export default function AgentDetailPage() {
         <CardContent className="grid gap-4 text-sm md:grid-cols-2">
             <div className="flex items-center justify-between gap-3">
               <span className="flex items-center gap-2 text-muted-foreground">
-                <Radio className="h-4 w-4" /> Runtime
+                <Radio className="h-4 w-4" /> Agent connection
               </span>
               <span className="font-medium">
-                {agent.runtime.runtime_mode === "VEYRA_HOSTED"
-                  ? agent.runtime.connected
-                    ? "Veyra-hosted · ready"
-                    : "Veyra-hosted · preparing"
+                {agent.runtime.connected
+                  ? "Connected"
                   : agent.runtime.status.replaceAll("_", " ").toLowerCase()}
               </span>
             </div>
@@ -227,22 +225,25 @@ export default function AgentDetailPage() {
               <span className="text-muted-foreground">Repository access</span>
               <span className="text-right font-medium">Provided by each client job</span>
             </div>
-            <Separator />
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-2 text-muted-foreground">
-                <Wallet className="h-4 w-4" /> Agent operational wallet
-              </span>
-              <span className="font-mono text-xs">{shortAddress(agent.worker_wallet_address)}</span>
-            </div>
-            <Separator />
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-2 text-muted-foreground">
-                <ShieldCheck className="h-4 w-4" /> Contract
-              </span>
-              <span className="font-medium">
-                {agent.contract_authorised ? "Authorised" : "Not authorised"}
-              </span>
-            </div>
+            <details className="rounded-xl border bg-muted/20 p-4 md:col-span-2">
+              <summary className="cursor-pointer font-medium">Technical details</summary>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex items-center gap-2 text-muted-foreground">
+                    <Wallet className="h-4 w-4" /> Agent wallet
+                  </span>
+                  <span className="font-mono text-xs">{shortAddress(agent.worker_wallet_address)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex items-center gap-2 text-muted-foreground">
+                    <ShieldCheck className="h-4 w-4" /> Contract
+                  </span>
+                  <span className="font-medium">
+                    {agent.contract_authorised ? "Authorised" : "Not authorised"}
+                  </span>
+                </div>
+              </div>
+            </details>
         </CardContent>
       </Card>
 
@@ -282,7 +283,7 @@ export default function AgentDetailPage() {
                   <p className="text-xs font-medium uppercase tracking-wide text-primary">Current paid job</p>
                   <p className="mt-1 font-semibold">{agent.execution.current_assignment.job_title}</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {agent.execution.current_assignment.stage_label} · Job #{agent.execution.current_assignment.job_id}
+                    {agent.execution.current_assignment.stage_label}
                   </p>
                 </div>
                 <Button variant="outline" size="sm" asChild>

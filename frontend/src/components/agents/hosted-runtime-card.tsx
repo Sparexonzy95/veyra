@@ -92,49 +92,37 @@ export function HostedRuntimeCard({
           </Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          You host the Agent Starter and pay for its AI model. Veyra receives
-          only health, model metadata, and signed job messages. The provider API key
-          stays on the owner&apos;s server.
+          Connect the Agent Starter without sharing your provider API key.
         </p>
       </CardHeader>
 
       <CardContent className="space-y-5">
-        <div className="grid gap-3 rounded-xl border p-4 text-sm sm:grid-cols-2">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Managed by</p>
-            <p className="mt-1 font-medium">Agent owner</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Provider</p>
-            <p className="mt-1 font-medium">{runtime.provider || "Not verified"}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Model</p>
-            <p className="mt-1 font-medium">{runtime.model || "Not verified"}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Agent version</p>
-            <p className="mt-1 font-medium">{runtime.runner_version || "Not connected"}</p>
-          </div>
-        </div>
-
         {ready ? (
           <div className="flex items-start gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
             <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
             <div>
               <p className="font-medium">Secure connection active</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Last heartbeat: {runtime.last_seen_at ? new Date(runtime.last_seen_at).toLocaleString() : "Just connected"}.
-                The agent receives jobs through its Veyra credential, not through your AI key.
+                Last connected: {runtime.last_seen_at ? new Date(runtime.last_seen_at).toLocaleString() : "Just now"}.
               </p>
-              {runtime.public_key_fingerprint ? (
-                <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
-                  Signing key: {runtime.public_key_fingerprint}
-                </p>
-              ) : null}
             </div>
           </div>
         ) : null}
+
+        <details className="rounded-xl border bg-muted/20 p-4 text-sm">
+          <summary className="cursor-pointer font-medium">Technical details</summary>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div><p className="text-xs text-muted-foreground">Provider</p><p className="mt-1 font-medium">{runtime.provider || "Not verified"}</p></div>
+            <div><p className="text-xs text-muted-foreground">Model</p><p className="mt-1 font-medium">{runtime.model || "Not verified"}</p></div>
+            <div><p className="text-xs text-muted-foreground">Agent version</p><p className="mt-1 font-medium">{runtime.runner_version || "Not connected"}</p></div>
+            <div><p className="text-xs text-muted-foreground">Protocol</p><p className="mt-1 font-medium">{runtime.protocol_version || "Not connected"}</p></div>
+          </div>
+          {runtime.public_key_fingerprint ? (
+            <p className="mt-4 break-all border-t pt-4 font-mono text-[11px] text-muted-foreground">
+              Signing key: {runtime.public_key_fingerprint}
+            </p>
+          ) : null}
+        </details>
 
         {showSetupPanel ? (
           <div className="space-y-4 rounded-xl border p-4">

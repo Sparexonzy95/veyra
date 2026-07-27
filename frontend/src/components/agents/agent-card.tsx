@@ -49,7 +49,7 @@ export function AgentCard({ agent }: { agent: AgentSummary }) {
       <CardContent className="mt-auto space-y-3 text-sm">
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-2 text-muted-foreground">
-            <Radio className="h-4 w-4" /> Runtime
+            <Radio className="h-4 w-4" /> Connection
           </span>
           <span>
             {agent.runtime.runtime_mode === "VEYRA_HOSTED"

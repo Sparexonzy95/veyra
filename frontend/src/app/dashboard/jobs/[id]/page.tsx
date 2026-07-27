@@ -18,7 +18,6 @@ import {
   Loader2,
   Radio,
   ShieldCheck,
-  UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -138,11 +137,6 @@ export default function JobDetailPage() {
     );
   }
 
-  const repoUrl = job.github_issue_url.replace(/\/issues\/\d+.*$/, "");
-  const prUrl = job.pull_request_number
-    ? `${repoUrl}/pull/${job.pull_request_number}`
-    : null;
-
   return (
     <div className="space-y-6">
       <Button variant="ghost" asChild className="px-0">
@@ -156,9 +150,6 @@ export default function JobDetailPage() {
         <div>
           <div className="mb-2 flex items-center gap-3">
             <JobStatusBadge status={job.client_status} />
-            <span className="text-sm text-muted-foreground">
-              Job #{job.onchain_job_id}
-            </span>
           </div>
 
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
@@ -273,16 +264,54 @@ export default function JobDetailPage() {
       <Card>
         <CardHeader>
           <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-            <CardTitle>Autonomous Execution</CardTitle>
+            <CardTitle>Work &amp; verification</CardTitle>
             <span className="text-sm font-medium text-muted-foreground">
               {job.execution.assignment?.stage_label ??
                 job.execution.matching_status.replaceAll("_", " ").toLowerCase()}
             </span>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           {job.execution.assignment ? (
-            <div className="grid gap-4 md:grid-cols-3">
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-xl border p-4">
+                  <p className="text-xs text-muted-foreground">Agent</p>
+                  <p className="mt-1 font-semibold">{job.execution.assignment.agent.name}</p>
+                </div>
+                <div className="rounded-xl border p-4">
+                  <p className="text-xs text-muted-foreground">Pull request</p>
+                  {job.execution.assignment.pull_request_url ? (
+                    <a href={job.execution.assignment.pull_request_url} target="_blank" rel="noreferrer" className="mt-1 flex items-center gap-2 font-semibold hover:text-primary">
+                      <GitPullRequest className="h-4 w-4" /> #{job.execution.assignment.pull_request_number}
+                    </a>
+                  ) : <p className="mt-1 font-semibold">Not submitted yet</p>}
+                </div>
+                <div className="rounded-xl border p-4">
+                  <p className="text-xs text-muted-foreground">Verification</p>
+                  <p className="mt-1 font-semibold">
+                    {job.execution.assignment.independent_verifier?.verdict ||
+                      job.execution.assignment.verification_status ||
+                      "Pending"}
+                  </p>
+                </div>
+                <div className="rounded-xl border p-4">
+                  <p className="text-xs text-muted-foreground">Payment</p>
+                  <p className="mt-1 font-semibold">
+                    {job.execution.assignment.settlement_transaction_hash
+                      ? "Settled"
+                      : "Protected in escrow"}
+                  </p>
+                </div>
+              </div>
+              {job.execution.assignment.attention_required || job.execution.assignment.failure_message ? (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                  {job.execution.assignment.attention_message || job.execution.assignment.failure_message}
+                </div>
+              ) : null}
+              <details className="rounded-xl border bg-muted/20 p-4 text-sm">
+                <summary className="cursor-pointer font-medium">Execution details</summary>
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
               <div className="rounded-xl border p-4">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Selected agent</p>
                 <p className="mt-1 font-semibold">{job.execution.assignment.agent.name}</p>
@@ -398,7 +427,9 @@ export default function JobDetailPage() {
                   </div>
                 </details>
               ) : null}
-            </div>
+                </div>
+              </details>
+            </>
           ) : (
             <div
               className={`rounded-xl border p-5 text-sm ${
@@ -484,18 +515,6 @@ export default function JobDetailPage() {
 
             <div className="flex items-center justify-between gap-3">
               <span className="flex items-center gap-2 text-muted-foreground">
-                <UserRound className="h-4 w-4" />
-                Agent
-              </span>
-              <span className="font-mono text-xs">
-                {shortAddress(job.provider_address)}
-              </span>
-            </div>
-
-            <Separator />
-
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-2 text-muted-foreground">
                 <ShieldCheck className="h-4 w-4" />
                 Network
               </span>
@@ -505,49 +524,9 @@ export default function JobDetailPage() {
         </Card>
       </div>
 
-      {job.pull_request_number || job.commit_hash ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Submitted Work</CardTitle>
-          </CardHeader>
-
-          <CardContent className="grid gap-4 md:grid-cols-2">
-            {prUrl ? (
-              <a
-                href={prUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center justify-between rounded-lg border p-4 hover:border-primary/50"
-              >
-                <span>
-                  <span className="block text-xs text-muted-foreground">
-                    Pull request
-                  </span>
-                  <span className="font-medium">
-                    #{job.pull_request_number}
-                  </span>
-                </span>
-                <ExternalLink className="h-4 w-4" />
-              </a>
-            ) : null}
-
-            {job.commit_hash ? (
-              <div className="rounded-lg border p-4">
-                <span className="block text-xs text-muted-foreground">
-                  Commit
-                </span>
-                <span className="font-mono text-sm">
-                  {shortAddress(job.commit_hash)}
-                </span>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-      ) : null}
-
       <details className="rounded-xl border bg-card p-5 shadow">
         <summary className="cursor-pointer font-semibold">
-          View transaction details
+          Technical details
         </summary>
 
         <div className="mt-4 grid gap-3 text-sm">
@@ -560,6 +539,13 @@ export default function JobDetailPage() {
             <span className="text-muted-foreground">Contract status</span>
             <span>{job.status}</span>
           </div>
+
+          {job.commit_hash ? (
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Commit</span>
+              <span className="font-mono">{shortAddress(job.commit_hash)}</span>
+            </div>
+          ) : null}
 
           {job.report_hash ? (
             <div className="flex justify-between gap-4">

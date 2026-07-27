@@ -6,31 +6,31 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --background: 36 38% 96%;
+    --foreground: 24 14% 11%;
+    --card: 40 100% 99%;
+    --card-foreground: 24 14% 11%;
     --brand-green: 151, 77%, 52%;
     --brand-blue: 217, 96%, 60%;
     --brand-purple: 292, 70%, 38%;
     --brand-orange: 29, 89%, 62%;
     --brand-pink: 327, 81%, 60%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 15 90% 55%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 24 50% 94%;
-    --secondary-foreground: 24 30% 20%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --popover: 40 100% 99%;
+    --popover-foreground: 24 14% 11%;
+    --primary: 28 46% 46%;
+    --primary-foreground: 40 100% 98%;
+    --secondary: 34 38% 91%;
+    --secondary-foreground: 25 22% 20%;
+    --muted: 34 30% 92%;
+    --muted-foreground: 26 11% 43%;
+    --accent: 33 42% 90%;
+    --accent-foreground: 25 22% 18%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
+    --border: 31 24% 84%;
+    --input: 31 24% 84%;
+    --ring: 28 46% 46%;
+    --radius: 0.75rem;
     --chart-1: 15 90% 55%;
     --chart-2: 15 90% 65%;
     --chart-3: 15 90% 45%;
@@ -81,6 +81,55 @@
   body {
     @apply bg-background text-foreground;
     font-family: "Titillium Web", "Segoe UI", Arial, sans-serif;
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 96px;
+}
+
+.dashboard-shell {
+  background-image:
+    radial-gradient(circle at 50% -15%, hsl(var(--primary) / 0.08), transparent 34rem),
+    linear-gradient(hsl(var(--background)), hsl(var(--background)));
+}
+
+.landing-grid {
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.045) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(to bottom, black, transparent 88%);
+}
+
+.landing-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(70px);
+  opacity: 0.42;
+}
+
+.landing-orb-one {
+  left: 8%;
+  top: 16%;
+  height: 23rem;
+  width: 23rem;
+  background: #8b4c28;
+}
+
+.landing-orb-two {
+  right: 4%;
+  top: 26%;
+  height: 27rem;
+  width: 27rem;
+  background: #d6a263;
+  opacity: 0.22;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
   }
 }
 

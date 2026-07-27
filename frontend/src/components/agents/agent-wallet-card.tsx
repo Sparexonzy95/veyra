@@ -94,7 +94,7 @@ export function AgentWalletCard({
           <div className="rounded-xl border bg-muted/20 p-4 text-sm">
             <p className="font-medium">{creating ? "Creating the dedicated wallet…" : "Wallet pending"}</p>
             <p className="mt-1 text-muted-foreground">
-              No manual wallet address is required. Veyra creates one after the hosted runtime is verified.
+              No manual wallet address is required. Veyra creates one after the Agent Starter is connected.
               Use the retry action in the Agent Connection card if setup was interrupted.
             </p>
           </div>

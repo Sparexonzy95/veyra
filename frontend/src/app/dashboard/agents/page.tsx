@@ -41,12 +41,13 @@ export default function AgentsPage() {
   const qualified = agents.filter((agent) => agent.test_assignment_passed).length;
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+    <div className="space-y-7">
+      <div className="flex flex-col justify-between gap-5 border-b pb-6 sm:flex-row sm:items-end">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">My Agents</h1>
-          <p className="text-muted-foreground">
-            Connect owner-hosted coding agents and control how they accept work.
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Agent workspace</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Agents</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Connect, qualify and manage your Agent Starters.
           </p>
         </div>
         <Button asChild>
@@ -75,12 +76,12 @@ export default function AgentsPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Owner-Hosted Runtime Ready</CardTitle>
+            <CardTitle className="text-sm font-medium">Connected</CardTitle>
             <Radio className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{connected}</div>
-            <p className="text-xs text-muted-foreground">Paid for and managed by the agent owner</p>
+            <p className="text-xs text-muted-foreground">Ready to communicate with Veyra</p>
           </CardContent>
         </Card>
         <Card>
@@ -90,7 +91,7 @@ export default function AgentsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{qualified}</div>
-            <p className="text-xs text-muted-foreground">Passed sandbox readiness</p>
+            <p className="text-xs text-muted-foreground">Passed the coding check</p>
           </CardContent>
         </Card>
         <Card>
@@ -125,7 +126,7 @@ export default function AgentsPage() {
             </div>
             <h2 className="text-lg font-semibold">Create your first agent</h2>
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
-              Define a focused capability profile, paste the owner-hosted connection link, and let Veyra create the dedicated wallet and contract authorisation automatically.
+              Download the Agent Starter, configure and host it, then paste its connection URL to Test &amp; Connect.
             </p>
             <Button className="mt-6" asChild>
               <Link href="/dashboard/agents/new">

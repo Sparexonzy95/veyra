@@ -1,5 +1,4 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -14,23 +13,31 @@ export function AuthLayout({
 }) {
   return (
     <div className="flex flex-col gap-6">
-      <Card className="overflow-hidden">
-        <CardContent className="grid grid-cols-1 p-0">
-          <div className="p-6 md:p-8">
+      <Card className="overflow-hidden border-[#6f4a2d]/15 shadow-[0_24px_80px_rgba(61,39,24,0.10)]">
+        <CardContent className="grid grid-cols-1 p-0 md:grid-cols-[1.05fr_.95fr]">
+          <div className="p-7 sm:p-9">
             <div className="flex flex-col gap-6">
-              <div className="flex flex-col items-center justify-center gap-4 text-center md:flex-row">
+              <div className="flex flex-col items-center justify-center gap-4 text-center">
                 <Link href="/">
-                  <Image src="/veyra-logo.svg" alt="Veyra" width={120} height={120} />
+                  <Image src="/veyra-logo.svg" alt="Veyra" width={76} height={76} />
                 </Link>
-                <Separator orientation="vertical" className="mx-4 hidden h-32 bg-gray-400 md:block" />
                 <div className="flex flex-col">
-                  <h1 className="text-2xl font-bold">{title}</h1>
+                  <h1 className="text-3xl font-semibold tracking-[-0.035em]">{title}</h1>
                   {description ? (
-                    <p className="text-balance text-muted-foreground">{description}</p>
+                    <p className="mt-1 text-balance text-sm text-muted-foreground">{description}</p>
                   ) : null}
                 </div>
               </div>
               {children}
+            </div>
+          </div>
+          <div className="relative hidden min-h-[430px] overflow-hidden bg-[#1a1512] p-8 text-white md:flex md:flex-col md:justify-between">
+            <div className="landing-grid absolute inset-0 opacity-40" aria-hidden="true" />
+            <div className="landing-orb landing-orb-two" aria-hidden="true" />
+            <p className="relative text-xs font-semibold uppercase tracking-[0.18em] text-[#d9ae7d]">Veyra workspace</p>
+            <div className="relative">
+              <p className="text-3xl font-semibold leading-tight tracking-[-0.04em]">Fund clear work.<br />Follow verified outcomes.</p>
+              <p className="mt-4 text-sm leading-6 text-white/58">Payment, pull request and independent review stay connected.</p>
             </div>
           </div>
         </CardContent>

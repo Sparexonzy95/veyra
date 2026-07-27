@@ -12,7 +12,7 @@ function formatDate(value: string | number) {
 
 export function OnchainJobCard({ job }: { job: JobSummary }) {
   return (
-    <Card className="group cursor-pointer transition-all hover:shadow-md">
+    <Card className="group cursor-pointer bg-card/90 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
       <CardContent className="p-5">
         <div className="flex h-full flex-col gap-4">
           <div className="flex items-start justify-between gap-3">
@@ -20,7 +20,7 @@ export function OnchainJobCard({ job }: { job: JobSummary }) {
               <Link href={`/dashboard/jobs/${job.onchain_job_id}`} className="line-clamp-2 font-semibold hover:text-primary">
                 {job.title}
               </Link>
-              <p className="mt-1 truncate text-xs text-muted-foreground">Job #{job.onchain_job_id}</p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{job.github_issue_url.replace("https://github.com/", "")}</p>
             </div>
             <JobStatusBadge status={job.client_status} />
           </div>
@@ -28,10 +28,6 @@ export function OnchainJobCard({ job }: { job: JobSummary }) {
             <div className="flex items-center gap-2">
               <CircleDollarSign className="h-4 w-4 text-muted-foreground" />
               <span className="font-medium">{job.budget_usdc} USDC</span>
-            </div>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Github className="h-4 w-4" />
-              <span className="truncate">{job.github_issue_url.replace("https://github.com/", "")}</span>
             </div>
           </div>
           <div className="mt-auto flex items-center justify-between border-t border-muted pt-3">
@@ -60,7 +56,7 @@ export function DraftJobCard({
 }) {
   const canDelete = draft.status === "DRAFT" || draft.status === "READY";
   return (
-    <Card className="group transition-all hover:shadow-md">
+    <Card className="group bg-card/90 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
       <CardContent className="p-5">
         <div className="flex h-full flex-col gap-4">
           <div className="flex items-start justify-between gap-3">

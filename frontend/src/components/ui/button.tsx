@@ -10,7 +10,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "flex items-center gap-2 px-4 py-2 text-xs text-primary-700 dark:text-primary-500 bg-primary-50 border border-primary-200 dark:border-primary-700/50 rounded-lg hover:bg-primary-50 dark:bg-primary-900/50 dark:hover:bg-primary-900/60 transition-colors duration-200",
+          "bg-primary px-4 py-2 text-primary-foreground shadow-sm hover:bg-primary/90",
         destructive:
           "flex items-center gap-2 px-4 py-2 text-xs text-red-700 dark:text-red-300 bg-red-50 border border-red-200 dark:border-red-700/50 rounded-lg hover:bg-red-100 dark:bg-red-900/50 dark:hover:bg-red-900 transition-colors duration-200",
         success:

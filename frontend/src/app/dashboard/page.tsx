@@ -47,14 +47,15 @@ function AgentOwnerDashboard() {
   const qualified = agents.filter((agent) => agent.test_assignment_passed).length;
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+    <div className="space-y-7">
+      <div className="flex flex-col justify-between gap-5 border-b pb-6 sm:flex-row sm:items-end">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Agent workspace</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
             Welcome{me?.user?.display_name ? `, ${me.user.display_name}` : ""}
           </h1>
-          <p className="text-muted-foreground">
-            Connect, qualify, and operate externally hosted coding agents.
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Connect an Agent Starter, complete qualification, and manage active work.
           </p>
         </div>
         <Button asChild><Link href="/dashboard/agents/new"><Plus className="h-4 w-4" /> Create Agent</Link></Button>
@@ -66,8 +67,8 @@ function AgentOwnerDashboard() {
         {loading ? Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-32 rounded-xl" />) : (
           <>
             <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Total Agents</CardTitle><Bot className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{data?.count ?? 0}</div><p className="text-xs text-muted-foreground">In your workspace</p></CardContent></Card>
-            <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Runtime Online</CardTitle><Radio className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{online}</div><p className="text-xs text-muted-foreground">Receiving heartbeats</p></CardContent></Card>
-            <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Qualified</CardTitle><CheckCircle className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{qualified}</div><p className="text-xs text-muted-foreground">Sandbox test passed</p></CardContent></Card>
+            <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Connected</CardTitle><Radio className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{online}</div><p className="text-xs text-muted-foreground">Ready to receive work</p></CardContent></Card>
+            <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Qualified</CardTitle><CheckCircle className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{qualified}</div><p className="text-xs text-muted-foreground">Coding check passed</p></CardContent></Card>
             <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Active</CardTitle><CircleDollarSign className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{active}</div><p className="text-xs text-muted-foreground">Eligible for work</p></CardContent></Card>
           </>
         )}
@@ -116,9 +117,9 @@ function ClientDashboard() {
   const completedJobs = data?.job_counts.COMPLETED ?? 0;
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div><h1 className="text-2xl font-bold tracking-tight">Welcome{me?.user?.display_name ? `, ${me.user.display_name}` : ""}</h1><p className="text-muted-foreground">Create funded GitHub jobs and track verified outcomes.</p></div>
+    <div className="space-y-7">
+      <div className="flex flex-col justify-between gap-5 border-b pb-6 sm:flex-row sm:items-end">
+        <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Client workspace</p><h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Welcome{me?.user?.display_name ? `, ${me.user.display_name}` : ""}</h1><p className="mt-1.5 text-sm text-muted-foreground">Create funded GitHub jobs and track verified outcomes.</p></div>
         <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Create Job</Button>
       </div>
 
@@ -136,7 +137,7 @@ function ClientDashboard() {
       </div>
 
       <section>
-        <div className="mb-5 flex items-center justify-between"><div><h2 className="text-xl font-semibold">Recent Jobs</h2><p className="text-sm text-muted-foreground">Your latest funded work.</p></div><Button variant="outline" asChild><Link href="/dashboard/jobs">View all</Link></Button></div>
+        <div className="mb-5 flex items-center justify-between"><div><h2 className="text-lg font-semibold">Recent jobs</h2><p className="text-sm text-muted-foreground">Payment, progress and review at a glance.</p></div><Button variant="ghost" asChild><Link href="/dashboard/jobs">View all</Link></Button></div>
         {loading ? (
           <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-56 rounded-xl" />)}</div>
         ) : data?.jobs.length ? (

@@ -420,7 +420,7 @@ export default function CreateAgentPage() {
               </div>
               <CapabilityPicker
                 title="Languages"
-                help="Select no more than two languages the owner-hosted agent actually supports."
+                help="Select no more than two languages the Agent Starter actually supports."
                 field="languages"
                 selected={form.languages}
                 onChange={(items) => update("languages", items)}
@@ -434,7 +434,7 @@ export default function CreateAgentPage() {
               />
               <CapabilityPicker
                 title="Testing tools"
-                help="Choose up to two test tools the owner-hosted agent should use."
+                help="Choose up to two test tools the Agent Starter should use."
                 field="testing_tools"
                 selected={form.testing_tools}
                 onChange={(items) => update("testing_tools", items)}

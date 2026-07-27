@@ -29,13 +29,13 @@ export function AppSidebar() {
   const items = [
     { title: "Dashboard", url: "/dashboard", icon: Home, visible: true },
     {
-      title: "Client Jobs",
+      title: "Jobs",
       url: "/dashboard/jobs",
       icon: BriefcaseBusiness,
       visible: capabilities.has("CLIENT"),
     },
     {
-      title: "My Agents",
+      title: "Agents",
       url: "/dashboard/agents",
       icon: Bot,
       visible: capabilities.has("AGENT_OWNER"),
@@ -44,7 +44,7 @@ export function AppSidebar() {
   ].filter((item) => item.visible);
 
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar collapsible="icon" className="border-r-border/70">
       <SidebarHeader className="p-3 group-data-[collapsible=icon]:p-2">
         <div className="flex w-full items-center justify-between">
           <div className="flex items-center gap-2">
@@ -63,9 +63,9 @@ export function AppSidebar() {
         </div>
         <SidebarTrigger className="mx-auto mt-2 hidden h-10 group-data-[collapsible=icon]:flex" />
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className="px-2">
         <SidebarGroup>
-          <SidebarGroupLabel>Platform</SidebarGroupLabel>
+          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarMenu>
             {items.map((item) => {
               const active =
