@@ -1,0 +1,5 @@
+﻿
+> @veyra/custom-escrow-contracts@0.4.0 compile
+> hardhat compile
+
+Nothing to compile

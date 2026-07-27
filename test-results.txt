@@ -1,0 +1,62 @@
+﻿
+> @veyra/custom-escrow-contracts@0.4.0 test
+> hardhat test
+
+
+
+  VeyraJobEscrow
+    deployment and administration
+      Γ£ö rejects a token address without contract code (76ms)
+      Γ£ö rejects an unsafe verification grace-period configuration (42ms)
+      Γ£ö rejects an unsafe claim-to-submission period (44ms)
+      Γ£ö uses two-step ownership transfer
+      Γ£ö allows only the owner to manage agent and verifier authorisation
+      Γ£ö rejects direct native-token transfers
+    job funding and claiming
+      Γ£ö creates a fully funded job and locks its commitments (41ms)
+      Γ£ö rejects zero budget, zero commitments, bad expiry, and unauthorised verifier (70ms)
+      Γ£ö rejects fee-on-transfer funding instead of under-collateralising the job
+      Γ£ö allows an authorised agent to claim an open job
+      Γ£ö rejects a client inviting itself as the provider
+      Γ£ö enforces independent client, worker, and verifier roles (40ms)
+      Γ£ö enforces invited-agent and authorisation restrictions
+      Γ£ö prevents a client from claiming their own job
+      Γ£ö lets the client cancel only an unclaimed job and receive a full refund
+      Γ£ö does not allow cancellation after an agent claims
+    submission
+      Γ£ö records the exact commit, pull request, and canonical deliverable hash (58ms)
+      Γ£ö allows only the assigned provider to submit
+      Γ£ö rejects empty commit or pull-request commitments
+      Γ£ö rejects submissions after the deadline
+      Γ£ö blocks a claimed agent after its authorisation is revoked
+    successful verification and Karma
+      Γ£ö pays the exact agent, closes escrow, and awards Karma
+      Γ£ö awards Karma once per unique client while counting every completed job (51ms)
+      Γ£ö awards additional Karma when a genuinely different client is served (54ms)
+      Γ£ö records a completed low-value job without awarding Karma
+      Γ£ö blocks a verifier immediately after its authorisation is revoked
+      Γ£ö allows verification after submission deadline but within the grace period
+      Γ£ö binds verification evidence to this job, deliverable, verdict, and report (40ms)
+      Γ£ö requires the exact job verifier and exact deliverable
+      Γ£ö cannot pay a job twice
+      Γ£ö rolls back all state if the token payout fails
+    rejection and refunds
+      Γ£ö lets only the verifier reject the exact submission and atomically refunds the client
+      Γ£ö rejects wrong verifier, wrong deliverable, and empty evidence
+      Γ£ö refunds an unclaimed expired job and a stale claimed job
+      Γ£ö protects a submitted job during the verifier grace period, then allows expiry refund
+      Γ£ö starts the verifier timeout at submission instead of the far-away job deadline
+      Γ£ö refunds a stale claim before a long job reaches its final expiry
+      Γ£ö prevents early, unauthorised, and duplicate refunds
+    pause and fund safety
+      Γ£ö pause blocks new work actions but never blocks client cancellation/refund
+      Γ£ö blocks a malicious payment token from re-entering job creation (80ms)
+      Γ£ö blocks cross-function reentrancy during an agent payout (103ms)
+      Γ£ö keeps token balance equal to active escrow across mixed job outcomes (58ms)
+      Γ£ö never permits a rejected job to be paid or refunded twice
+      Γ£ö prevents verification or rejection once the grace period has ended
+      Γ£ö owner can recover accidental excess USDC but cannot touch active escrow
+
+
+  45 passing (6s)
+

@@ -1,0 +1,9 @@
+.env
+node_modules/
+artifacts/
+cache/
+coverage/
+*.log
+*.zip
+.DS_Store
+Thumbs.db

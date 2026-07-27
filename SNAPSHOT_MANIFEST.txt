@@ -1,0 +1,27 @@
+Veyra Custom Escrow Contract — Security-Reviewed Snapshot v0.4.0
+
+Scope: contract-only
+Status: 45 tests passing, 0 failing
+Compiler: solc 0.8.24
+Runtime bytecode: 12,700 bytes
+Network target: Arc Testnet, chain ID 5042002
+Payment token target: 0x3600000000000000000000000000000000000000
+Deployment status: NOT DEPLOYED
+
+Included:
+- production Solidity contract
+- token interfaces and checked token-call library
+- malicious/mock token contracts
+- 45 adversarial tests
+- Arc deployment and role scripts
+- ABI and bytecode
+- internal audit report
+- clean test results
+- dependency audit results
+- README and changelog
+
+Excluded:
+- .env secrets
+- node_modules
+- Hardhat cache
+- full build artifacts (a minimal deployable artifact is included)
