@@ -13,16 +13,31 @@ if (-not (Test-Path -LiteralPath $envFile)) {
     exit 1
 }
 
-if (-not (Test-Path -LiteralPath $statePath)) {
-    throw "LogicBloom state file is missing: $statePath"
+$runtimePort = [Environment]::GetEnvironmentVariable("RUNTIME_PORT", "Process")
+if ([string]::IsNullOrWhiteSpace($runtimePort)) {
+    $portSetting = Get-Content -LiteralPath $envFile |
+        Where-Object { $_ -match "^\s*RUNTIME_PORT\s*=" } |
+        Select-Object -Last 1
+    if ($portSetting -match "^\s*RUNTIME_PORT\s*=\s*(\d+)\s*(?:#.*)?$") {
+        $runtimePort = $Matches[1]
+    }
 }
 
-# Refuse to hide an older runtime behind the same port.
-$listener = Get-NetTCPConnection -LocalPort 9100 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ([string]::IsNullOrWhiteSpace($runtimePort)) {
+    $runtimePort = "9100"
+}
+
+$parsedPort = 0
+if (-not [int]::TryParse($runtimePort, [ref]$parsedPort) -or $parsedPort -lt 1 -or $parsedPort -gt 65535) {
+    throw "RUNTIME_PORT must be an integer from 1 through 65535."
+}
+
+# Refuse to hide another runtime behind this starter's configured port.
+$listener = Get-NetTCPConnection -LocalPort $parsedPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($listener) {
     $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
     $command = if ($process) { $process.CommandLine } else { "Unknown command" }
-    throw "Port 9100 is already in use by PID $($listener.OwningProcess): $command`nStop that process before starting LogicBloom."
+    throw "Port $parsedPort is already in use by PID $($listener.OwningProcess): $command`nStop that process before starting this Veyra Agent Starter."
 }
 
 # Pin the runtime to this exact project directory. These process-level values
@@ -30,17 +45,14 @@ if ($listener) {
 $env:VEYRA_RUNTIME_ENV_FILE = $envFile
 $env:VEYRA_RUNTIME_STATE_DIR = $stateDir
 
-$state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-$paired = -not [string]::IsNullOrWhiteSpace([string]$state.runtime_credential)
-
-Write-Host "LogicBloom state file: $statePath" -ForegroundColor Cyan
-Write-Host "Runtime ID: $($state.runtime_id)" -ForegroundColor Cyan
-Write-Host "Agent ID: $($state.agent_id)" -ForegroundColor Cyan
-Write-Host "Paired credential present: $paired" -ForegroundColor Cyan
-
-if (-not $paired) {
-    throw "The canonical LogicBloom state is not paired. Run .\restore-agent-connection.ps1 first."
+if (Test-Path -LiteralPath $statePath) {
+    Write-Host "Reusing the existing Veyra runtime identity." -ForegroundColor Cyan
 }
+else {
+    Write-Host "No runtime identity exists yet. Creating a new private identity for this starter." -ForegroundColor Cyan
+}
+Write-Host "State directory: $stateDir" -ForegroundColor Cyan
+Write-Host "Listening port: $parsedPort" -ForegroundColor Cyan
 
 $python = "C:\Users\cashkink\Downloads\Veyra-backend\.venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $python)) {

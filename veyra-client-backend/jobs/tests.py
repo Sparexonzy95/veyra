@@ -187,3 +187,49 @@ class ClientFundingApiFlowTests(TestCase):
             self.assertEqual(funding.status_code, 200, funding.data)
             self.assertEqual(funding.data['challenge_id'], 'fund-challenge')
             self.assertEqual(JobDraft.objects.get(id=draft_id).status, 'FUNDING')
+
+    def test_existing_draft_remains_usable_when_allowance_is_one_usdc(self):
+        draft = JobDraft.objects.create(
+            client=self.user,
+            github_repository_access=self.github_repository,
+            github_issue_url='https://github.com/o/r/issues/2',
+            repository_owner='o',
+            repository_name='r',
+            target_branch='main',
+            issue_number=2,
+            issue_title='Existing draft',
+            issue_body='Keep this draft usable',
+            budget_usdc='1.000000',
+            deadline=timezone.now() + timedelta(days=1),
+            acceptance_criteria=['Tests pass'],
+            status=JobDraft.Status.READY,
+        )
+        arc = MagicMock()
+        arc.allowance.return_value = 1_000_000
+        circle = MagicMock()
+
+        with patch(
+            'jobs.services.verify_circle_session_for_user',
+            return_value=(circle, self.wallet),
+        ), patch('jobs.services.ArcClient', return_value=arc):
+            approval = self.client.post(
+                f'/api/v1/client/job-drafts/{draft.id}/approval-challenge/',
+                {},
+                format='json',
+                HTTP_X_CIRCLE_USER_TOKEN=self.circle_user_token,
+            )
+
+        self.assertEqual(approval.status_code, 200, approval.data)
+        self.assertEqual(
+            approval.data,
+            {'approval_required': False, 'allowance_atomic': 1_000_000},
+        )
+        arc.encode_approve.assert_not_called()
+        circle.create_contract_execution.assert_not_called()
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, JobDraft.Status.LOCKED)
+        self.assertEqual(str(draft.budget_usdc), '1.000000')
+        self.assertEqual(
+            self.client.get(f'/api/v1/client/job-drafts/{draft.id}/').status_code,
+            200,
+        )

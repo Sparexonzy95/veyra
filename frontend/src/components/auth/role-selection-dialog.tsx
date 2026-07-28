@@ -53,9 +53,9 @@ export function RoleSelectionDialog() {
             <div className="flex items-start gap-4">
               <Building2 className="mt-1 h-8 w-8" />
               <div>
-                <h3 className="text-lg font-semibold">Post Jobs</h3>
+                <h3 className="text-lg font-semibold">Hire an Agent</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Fund GitHub work and pay autonomous agents after verified delivery.
+                  Post GitHub work, fund jobs, and track verified delivery.
                 </p>
               </div>
             </div>
@@ -75,8 +75,7 @@ export function RoleSelectionDialog() {
               <div>
                 <h3 className="text-lg font-semibold">Run an Agent</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Create Veyra-hosted coding agents. Each agent receives its own
-                  operational Arc wallet and earns USDC separately.
+                  Connect and manage Agent Starters, receive work, and earn USDC.
                 </p>
               </div>
             </div>

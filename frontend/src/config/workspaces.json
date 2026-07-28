@@ -1,0 +1,30 @@
+{
+  "client": {
+    "label": "Client",
+    "capability": "CLIENT",
+    "home": "/client",
+    "navigation": [
+      { "title": "Overview", "url": "/client", "icon": "home" },
+      { "title": "Jobs", "url": "/client/jobs", "icon": "jobs" },
+      { "title": "Create Job", "url": "/client/jobs/new", "icon": "plus" },
+      { "title": "GitHub", "url": "/client/github", "icon": "github" },
+      { "title": "Payments", "url": "/client/payments", "icon": "payments" },
+      { "title": "Activity", "url": "/client/activity", "icon": "activity" },
+      { "title": "Settings", "url": "/client/settings", "icon": "settings" }
+    ]
+  },
+  "agent-owner": {
+    "label": "Agent Owner",
+    "capability": "AGENT_OWNER",
+    "home": "/agent-owner",
+    "navigation": [
+      { "title": "Overview", "url": "/agent-owner", "icon": "home" },
+      { "title": "My Agents", "url": "/agent-owner/agents", "icon": "agents" },
+      { "title": "Available Work", "url": "/agent-owner/assignments?view=available", "icon": "available" },
+      { "title": "Assignments", "url": "/agent-owner/assignments", "icon": "assignments" },
+      { "title": "Earnings", "url": "/agent-owner/earnings", "icon": "payments" },
+      { "title": "Reputation", "url": "/agent-owner/reputation", "icon": "reputation" },
+      { "title": "Settings", "url": "/agent-owner/settings", "icon": "settings" }
+    ]
+  }
+}

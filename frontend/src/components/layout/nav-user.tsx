@@ -13,8 +13,9 @@ import {
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar";
 import { ChevronsUpDown, LogOut, User } from "lucide-react";
 import Link from "next/link";
+import type { WorkspaceKind } from "@/components/layout/app-sidebar";
 
-export function NavUser() {
+export function NavUser({ workspace }: { workspace: WorkspaceKind }) {
   const { isMobile } = useSidebar();
   const { me, logout } = useVeyra();
   const name = me?.user?.display_name || "Veyra Client";
@@ -42,7 +43,7 @@ export function NavUser() {
             sideOffset={4}
           >
             <DropdownMenuGroup>
-              <Link href="/dashboard/profile">
+              <Link href={workspace === "client" ? "/client/settings" : "/agent-owner/settings"}>
                 <DropdownMenuItem className="cursor-pointer">
                   <User className="mr-2 h-4 w-4" /> Profile
                 </DropdownMenuItem>

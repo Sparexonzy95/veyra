@@ -15,7 +15,8 @@ $hashPath = "$zipPath.sha256.txt"
 $excludedDirectoryNames = @(
     ".git", ".venv", "venv", "node_modules", ".next", "__pycache__",
     ".pytest_cache", ".veyra-runtime", "_database_backups",
-    "_runtime_identity_backups", "staticfiles", "media"
+    "_runtime_identity_backups", "_patch_backups", "_safe_source_backups",
+    "staticfiles", "media"
 )
 $excludedFilePatterns = @(
     ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx",
@@ -23,27 +24,53 @@ $excludedFilePatterns = @(
     "*.sha256.txt", "*.pyc"
 )
 
+function Copy-SafeSourceTree {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceDirectory,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$RelativeDirectory,
+        [Parameter(Mandatory = $true)][string]$DestinationRoot
+    )
+
+    Get-ChildItem -LiteralPath $SourceDirectory -Force | ForEach-Object {
+        $relative = if ($RelativeDirectory) {
+            Join-Path $RelativeDirectory $_.Name
+        }
+        else {
+            $_.Name
+        }
+
+        if ($_.PSIsContainer) {
+            if ($excludedDirectoryNames -contains $_.Name) {
+                return
+            }
+            Copy-SafeSourceTree `
+                -SourceDirectory $_.FullName `
+                -RelativeDirectory $relative `
+                -DestinationRoot $DestinationRoot
+            return
+        }
+
+        foreach ($pattern in $excludedFilePatterns) {
+            if ($_.Name -like $pattern) {
+                return
+            }
+        }
+        $destination = Join-Path $DestinationRoot $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
+    }
+}
+
 try {
     if (Test-Path -LiteralPath $stage) {
         Remove-Item -LiteralPath $stage -Recurse -Force
     }
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
-    Get-ChildItem -LiteralPath $ProjectRoot -Recurse -Force -File | ForEach-Object {
-        $relative = $_.FullName.Substring($ProjectRoot.Length).TrimStart("\\", "/")
-        $segments = $relative -split "[\\/]"
-        if ($segments | Where-Object { $excludedDirectoryNames -contains $_ }) {
-            return
-        }
-        foreach ($pattern in $excludedFilePatterns) {
-            if ($_.Name -like $pattern) {
-                return
-            }
-        }
-        $destination = Join-Path $stage $relative
-        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-        Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
-    }
+    Copy-SafeSourceTree `
+        -SourceDirectory $ProjectRoot `
+        -RelativeDirectory "" `
+        -DestinationRoot $stage
 
     $forbidden = Get-ChildItem -LiteralPath $stage -Recurse -Force -File | Where-Object {
         $_.Name -eq ".env" -or

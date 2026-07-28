@@ -1,0 +1,60 @@
+"use client";
+
+import { AppSidebar, type WorkspaceKind } from "@/components/layout/app-sidebar";
+import { Footer } from "@/components/layout/footer";
+import { Header } from "@/components/layout/header";
+import { useVeyra } from "@/components/providers/veyra-provider";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+
+const capabilityFor: Record<WorkspaceKind, "CLIENT" | "AGENT_OWNER"> = {
+  client: "CLIENT",
+  "agent-owner": "AGENT_OWNER",
+};
+
+export function WorkspaceShell({
+  workspace,
+  children,
+}: {
+  workspace: WorkspaceKind;
+  children: React.ReactNode;
+}) {
+  const { me, sdkReady } = useVeyra();
+  const router = useRouter();
+  const allowed = Boolean(me?.capabilities?.includes(capabilityFor[workspace]));
+
+  useEffect(() => {
+    if (!sdkReady || !me) return;
+    if (!me.authenticated) {
+      router.replace("/login");
+      return;
+    }
+    if (!allowed) router.replace("/workspace");
+  }, [allowed, me, router, sdkReady]);
+
+  if (!sdkReady || !me) {
+    return (
+      <div className="flex min-h-svh items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+  if (!me.authenticated || !allowed) return null;
+
+  return (
+    <SidebarProvider>
+      <AppSidebar workspace={workspace} />
+      <SidebarInset>
+        <Header workspace={workspace} />
+        <div className="dashboard-shell flex min-h-screen flex-col">
+          <main className="mx-auto w-full max-w-[1440px] flex-1 space-y-4 px-4 py-6 sm:px-6 md:px-8 md:py-8">
+            {children}
+          </main>
+          <Footer />
+        </div>
+      </SidebarInset>
+    </SidebarProvider>
+  );
+}

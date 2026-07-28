@@ -21,8 +21,10 @@ export default function LoginPage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (me?.authenticated && me.capabilities?.includes("CLIENT")) {
-      router.replace("/dashboard");
+    if (me?.authenticated && me.capabilities?.some((capability) =>
+      capability === "CLIENT" || capability === "AGENT_OWNER"
+    )) {
+      router.replace("/workspace");
     }
   }, [me, router]);
 

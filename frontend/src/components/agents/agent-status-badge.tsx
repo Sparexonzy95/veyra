@@ -1,29 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import type { AgentStatus } from "@/types/veyra";
 
-const labels: Record<AgentStatus, string> = {
-  SETUP_REQUIRED: "Setup required",
-  PROFILE_READY: "Profile ready",
-  PROVISIONING: "Provisioning",
-  RUNTIME_CONNECTED: "Connected",
-  READY_FOR_QUALIFICATION: "Ready for qualification",
-  RUNTIME_VERIFICATION_FAILED: "Connection failed",
-  WALLET_CREATION_FAILED: "Wallet creation failed",
-  CONTRACT_AUTHORISATION_FAILED: "Contract authorisation failed",
-  PROVIDER_UNAVAILABLE: "Provider unavailable",
-  CONNECTION_FAILED: "Connection failed",
-  ENGINE_CONNECTED: "Connected",
-  WALLET_READY: "Wallet ready",
-  PAYOUT_READY: "Payout ready",
-  GITHUB_READY: "GitHub ready",
-  AUTHORISATION_PENDING: "Authorisation pending",
-  TESTING: "Readiness running",
-  ACTIVE: "Active",
-  PAUSED: "Paused",
-  SUSPENDED: "Suspended",
-};
-
-const failureStatuses: AgentStatus[] = [
+const attentionStatuses: AgentStatus[] = [
   "RUNTIME_VERIFICATION_FAILED",
   "WALLET_CREATION_FAILED",
   "CONTRACT_AUTHORISATION_FAILED",
@@ -33,14 +11,11 @@ const failureStatuses: AgentStatus[] = [
 ];
 
 export function AgentStatusBadge({ status }: { status: AgentStatus }) {
-  const variant =
-    status === "ACTIVE" || status === "READY_FOR_QUALIFICATION"
-      ? "success"
-      : failureStatuses.includes(status)
-        ? "destructive"
-        : status === "AUTHORISATION_PENDING" || status === "TESTING" || status === "PROVISIONING"
-          ? "warning"
-          : "secondary";
-
-  return <Badge variant={variant}>{labels[status]}</Badge>;
+  if (status === "ACTIVE") {
+    return <Badge variant="success">Active</Badge>;
+  }
+  if (attentionStatuses.includes(status)) {
+    return <Badge variant="destructive">Needs attention</Badge>;
+  }
+  return <Badge variant="secondary">Offline</Badge>;
 }

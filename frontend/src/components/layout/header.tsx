@@ -9,18 +9,26 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import type { WorkspaceKind } from "@/components/layout/app-sidebar";
 
 function titleFor(pathname: string) {
-  if (pathname === "/dashboard/agents/new") return "Create Agent";
-  if (/\/dashboard\/agents\/[^/]+/.test(pathname)) return "Agent Details";
-  if (pathname.startsWith("/dashboard/agents")) return "My Agents";
-  if (/\/dashboard\/jobs\/\d+/.test(pathname)) return "Job Details";
-  if (pathname.startsWith("/dashboard/jobs")) return "Jobs";
-  if (pathname.startsWith("/dashboard/profile")) return "Profile";
-  return "Dashboard";
+  if (pathname === "/agent-owner/agents/new") return "Connect Agent";
+  if (/\/agent-owner\/agents\/[^/]+/.test(pathname)) return "Agent Details";
+  if (pathname.startsWith("/agent-owner/agents")) return "My Agents";
+  if (pathname.startsWith("/agent-owner/assignments")) return "Assignments";
+  if (pathname.startsWith("/agent-owner/earnings")) return "Earnings";
+  if (pathname.startsWith("/agent-owner/reputation")) return "Reputation";
+  if (pathname === "/client/jobs/new") return "Create Job";
+  if (/\/client\/jobs\/[^/]+/.test(pathname)) return "Job Details";
+  if (pathname.startsWith("/client/jobs")) return "Jobs";
+  if (pathname.startsWith("/client/github")) return "GitHub";
+  if (pathname.startsWith("/client/payments")) return "Payments";
+  if (pathname.startsWith("/client/activity")) return "Activity";
+  if (pathname.endsWith("/settings")) return "Settings";
+  return "Overview";
 }
 
-export function Header() {
+export function Header({ workspace }: { workspace: WorkspaceKind }) {
   const pathname = usePathname();
   const { circleToken, refreshMe, logout } = useVeyra();
   const [loggingOut, setLoggingOut] = useState(false);
@@ -53,11 +61,13 @@ export function Header() {
         <h2 className="text-xl font-bold tracking-tight md:text-2xl">{titleFor(pathname)}</h2>
         <div className="flex items-center gap-2 md:gap-4">
           <ThemeToggle />
-          <Button variant="outline" size="default" onClick={() => void refreshBalance()} className="flex items-center gap-2">
-            <Wallet className="h-4 w-4" />
-            <span className="hidden sm:inline">Wallet</span>
-            <RefreshCw className="h-3.5 w-3.5" />
-          </Button>
+          {workspace === "client" ? (
+            <Button variant="outline" size="default" onClick={() => void refreshBalance()} className="flex items-center gap-2">
+              <Wallet className="h-4 w-4" />
+              <span className="hidden sm:inline">Wallet</span>
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="default"

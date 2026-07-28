@@ -38,7 +38,7 @@ ERC20_ABI = [
             {"name": "owner", "type": "address"},
             {"name": "spender", "type": "address"},
         ],
-        "outputs": [{"name": "", "type": "bool"}],
+        "outputs": [{"name": "", "type": "uint256"}],
     },
     {
         "type": "function",
@@ -48,7 +48,7 @@ ERC20_ABI = [
             {"name": "spender", "type": "address"},
             {"name": "amount", "type": "uint256"},
         ],
-        "outputs": [{"name": "", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "bool"}],
     },
 ]
 

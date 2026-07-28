@@ -17,7 +17,7 @@ export function OnchainJobCard({ job }: { job: JobSummary }) {
         <div className="flex h-full flex-col gap-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <Link href={`/dashboard/jobs/${job.onchain_job_id}`} className="line-clamp-2 font-semibold hover:text-primary">
+              <Link href={`/client/jobs/${job.onchain_job_id}`} className="line-clamp-2 font-semibold hover:text-primary">
                 {job.title}
               </Link>
               <p className="mt-1 truncate text-xs text-muted-foreground">{job.github_issue_url.replace("https://github.com/", "")}</p>
@@ -36,7 +36,7 @@ export function OnchainJobCard({ job }: { job: JobSummary }) {
               <span>Due {formatDate(job.expires_at)}</span>
             </div>
             <Button variant="ghost" size="sm" asChild>
-              <Link href={`/dashboard/jobs/${job.onchain_job_id}`}>View Job</Link>
+              <Link href={`/client/jobs/${job.onchain_job_id}`}>View Job</Link>
             </Button>
           </div>
         </div>

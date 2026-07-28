@@ -260,7 +260,7 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
 
   const prepareWallet = useCallback(async (
     session: CircleSession,
-    redirectPath = "/dashboard",
+    redirectPath = "/workspace",
     mode: "CLIENT" | "IDENTITY" = "CLIENT",
   ) => {
     setWalletSetupOpen(true);
@@ -347,10 +347,10 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
       }
       if (exchange.authenticated) {
         const nextMe = await refreshMe();
-        if (nextMe.capabilities?.includes("CLIENT")) {
-          router.replace("/dashboard");
-        } else if (nextMe.capabilities?.includes("AGENT_OWNER")) {
-          router.replace("/dashboard/agents");
+        if (nextMe.capabilities?.some((capability) =>
+          capability === "CLIENT" || capability === "AGENT_OWNER"
+        )) {
+          router.replace("/workspace");
         } else {
           setRoleDialogOpen(true);
         }
@@ -507,7 +507,7 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         github_username: "",
       });
-      await prepareWallet(session, "/dashboard", "CLIENT");
+      await prepareWallet(session, "/client", "CLIENT");
     } catch (roleError) {
       setWalletSetupOpen(false);
       setError(roleError instanceof Error ? roleError.message : "Wallet setup failed.");
@@ -534,14 +534,14 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (onboarding.wallet_setup_required) {
-        await prepareWallet(session, "/dashboard/agents", "IDENTITY");
+        await prepareWallet(session, "/agent-owner", "IDENTITY");
       } else {
         await refreshMe();
         setWalletSetupOpen(false);
         setRoleDialogOpen(false);
         setStatus(null);
         toast.success("Agent workspace ready. Create an agent to provision its dedicated wallet.");
-        router.replace("/dashboard/agents");
+        router.replace("/agent-owner");
       }
     } catch (roleError) {
       setWalletSetupOpen(false);

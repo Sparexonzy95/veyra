@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest import TestCase
 
@@ -8,6 +9,9 @@ from web3.exceptions import TransactionNotFound
 
 from blockchain.client import (
     ARC_TESTNET_CHAIN_ID,
+    ERC20_ABI,
+    PUBLIC_ARC_RPC_FALLBACKS,
+    ArcClient,
     ArcProviderPool,
     ArcRPCUnavailable,
     parse_arc_rpc_urls,
@@ -30,6 +34,8 @@ class FakeEth:
         self.transaction_outcomes = []
         self.broadcast_outcomes = []
         self.broadcast_raw = []
+        self.allowance_outcomes = []
+        self.contract_abis = []
 
     @staticmethod
     def _next(outcomes, default):
@@ -59,6 +65,19 @@ class FakeEth:
         self.broadcast_raw.append(value)
         return self._next(self.broadcast_outcomes, Web3.keccak(value))
 
+    def contract(self, *, address, abi):
+        self.contract_abis.append(abi)
+        owner = self
+
+        class Functions:
+            def allowance(self, account, spender):
+                return self
+
+            def call(self):
+                return owner._next(owner.allowance_outcomes, 1_000_000)
+
+        return SimpleNamespace(functions=Functions())
+
 
 class FakeWeb3:
     def __init__(self, eth):
@@ -76,6 +95,28 @@ def pool_for(eth_by_url, *, clock=lambda: 0.0, cooldown=30):
 
 
 class ArcRPCProviderPoolTests(TestCase):
+    def test_usdc_allowance_failover_preserves_correct_abi_for_every_provider(self):
+        providers = {
+            url: FakeEth()
+            for url in PUBLIC_ARC_RPC_FALLBACKS
+        }
+        for url in PUBLIC_ARC_RPC_FALLBACKS[:-1]:
+            providers[url].allowance_outcomes = [HTTPFailure(503)]
+        providers[PUBLIC_ARC_RPC_FALLBACKS[-1]].allowance_outcomes = [1_000_000]
+        pool = pool_for(providers)
+        expected_abi = deepcopy(ERC20_ABI)
+
+        allowance = ArcClient(provider_pool=pool).allowance(
+            "0x1111111111111111111111111111111111111111"
+        )
+
+        self.assertEqual(allowance, 1_000_000)
+        self.assertEqual(ERC20_ABI, expected_abi)
+        for url in PUBLIC_ARC_RPC_FALLBACKS:
+            with self.subTest(provider=url):
+                self.assertEqual(providers[url].contract_abis, [expected_abi])
+                self.assertIs(providers[url].contract_abis[0], ERC20_ABI)
+
     def test_rpc_list_parses_commas_newlines_and_removes_duplicates(self):
         values = parse_arc_rpc_urls(
             "https://one.example/key,\nhttps://two.example/rpc\nhttps://one.example/key/",

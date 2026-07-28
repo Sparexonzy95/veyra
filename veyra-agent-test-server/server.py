@@ -62,7 +62,7 @@ if RUNTIME_ROLE not in {"WORKER", "VERIFIER"}:
     raise RuntimeError("VEYRA_RUNTIME_ROLE must be WORKER or VERIFIER.")
 RUNTIME_VERSION = f"veyra-owner-runtime-{RUNTIME_ROLE.lower()}/1.1.3-git-path-parser"
 PROTOCOL_VERSION = 1
-TOKEN_TTL_SECONDS = int(os.getenv("CONNECTION_LINK_TTL_SECONDS", "900"))
+TOKEN_TTL_SECONDS = 24 * 60 * 60
 HEARTBEAT_SECONDS = max(5, int(os.getenv("VEYRA_HEARTBEAT_SECONDS", "10")))
 
 AI_PROVIDER = os.getenv("AI_PROVIDER", "aiand").strip()
@@ -91,38 +91,25 @@ def b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
 
-def load_or_create_private_key() -> Ed25519PrivateKey:
-    if PRIVATE_KEY_PATH.exists():
-        return serialization.load_pem_private_key(
-            PRIVATE_KEY_PATH.read_bytes(),
-            password=None,
-        )
-    private_key = Ed25519PrivateKey.generate()
-    PRIVATE_KEY_PATH.write_bytes(
-        private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
+def _public_key_text(private_key: Ed25519PrivateKey) -> str:
+    return b64url(
+        private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
         )
     )
-    return private_key
 
 
-PRIVATE_KEY = load_or_create_private_key()
-PUBLIC_KEY_TEXT = b64url(
-    PRIVATE_KEY.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-)
-
-
-def default_state() -> dict[str, Any]:
+def _new_state(public_key: str) -> dict[str, Any]:
+    issued_at = int(time.time())
     return {
         "runtime_id": f"runtime-{uuid.uuid4()}",
+        "signing_public_key": public_key,
         "one_time_token": secrets.token_urlsafe(36),
-        "token_expires_at": int(time.time()) + TOKEN_TTL_SECONDS,
+        "token_issued_at": issued_at,
+        "token_expires_at": issued_at + TOKEN_TTL_SECONDS,
         "token_consumed": False,
+        "revoked_token_hashes": [],
         "agent_id": "",
         "agent_name": "",
         "runtime_credential": "",
@@ -150,25 +137,187 @@ def default_state() -> dict[str, Any]:
     }
 
 
+def default_state() -> dict[str, Any]:
+    return _new_state(PUBLIC_KEY_TEXT)
+
+
+def _protect_private_path(path: Path, *, directory: bool = False) -> None:
+    try:
+        path.chmod(0o700 if directory else 0o600)
+        if os.name == "nt":
+            permission = "(OI)(CI)F" if directory else "F"
+            principal = subprocess.run(
+                ["whoami"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            if not principal:
+                raise RuntimeError("Unable to determine the current Windows account.")
+            subprocess.run(
+                [
+                    "icacls",
+                    str(path),
+                    "/inheritance:r",
+                    "/grant:r",
+                    f"{principal}:{permission}",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Unable to restrict access to private runtime path {path}."
+        ) from exc
+
+
+def _read_state_file() -> dict[str, Any]:
+    try:
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8-sig"))
+        if not isinstance(state, dict):
+            raise ValueError("Runtime state root must be a JSON object.")
+    except Exception as exc:
+        raise RuntimeError(
+            f"Unable to read Veyra runtime state at {STATE_PATH}. "
+            "The file was preserved and was not replaced."
+        ) from exc
+    return state
+
+
+def _validate_state_identity(
+    state: dict[str, Any],
+    *,
+    expected_public_key: str | None = None,
+) -> None:
+    runtime_id = state.get("runtime_id")
+    token = state.get("one_time_token")
+    try:
+        if not isinstance(runtime_id, str) or not runtime_id.startswith("runtime-"):
+            raise ValueError("runtime_id is missing or invalid")
+        uuid.UUID(runtime_id.removeprefix("runtime-"))
+        if not isinstance(token, str) or len(token) < 32:
+            raise ValueError("one_time_token is missing or invalid")
+        if not isinstance(state.get("token_expires_at"), int):
+            raise ValueError("token_expires_at is missing or invalid")
+        if not isinstance(state.get("token_consumed"), bool):
+            raise ValueError("token_consumed is missing or invalid")
+        issued_at = state.get("token_issued_at")
+        if issued_at is not None and not isinstance(issued_at, int):
+            raise ValueError("token_issued_at is invalid")
+        revoked_hashes = state.get("revoked_token_hashes")
+        if revoked_hashes is not None and (
+            not isinstance(revoked_hashes, list)
+            or any(
+                not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+                for value in revoked_hashes
+            )
+        ):
+            raise ValueError("revoked_token_hashes is invalid")
+        public_key = state.get("signing_public_key")
+        if public_key is not None and (
+            not isinstance(public_key, str) or not public_key
+        ):
+            raise ValueError("signing_public_key is invalid")
+        if expected_public_key and public_key not in {None, expected_public_key}:
+            raise ValueError("state does not match the runtime signing key")
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Veyra runtime state at {STATE_PATH} is corrupt or incomplete. "
+            "The file was preserved and the identity was not regenerated."
+        ) from exc
+
+
+def _load_private_key() -> Ed25519PrivateKey:
+    try:
+        private_key = serialization.load_pem_private_key(
+            PRIVATE_KEY_PATH.read_bytes(),
+            password=None,
+        )
+        if not isinstance(private_key, Ed25519PrivateKey):
+            raise ValueError("Signing key is not Ed25519.")
+        return private_key
+    except Exception as exc:
+        raise RuntimeError(
+            f"Veyra signing identity at {PRIVATE_KEY_PATH} is corrupt. "
+            "It was preserved and was not regenerated."
+        ) from exc
+
+
+def _write_new_identity(
+    state: dict[str, Any],
+    private_key: Ed25519PrivateKey,
+) -> None:
+    key_temporary = STATE_DIR / f".ed25519-private-{uuid.uuid4().hex}.tmp"
+    state_temporary = STATE_DIR / f".state-{uuid.uuid4().hex}.tmp"
+    try:
+        key_temporary.write_bytes(
+            private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
+        # Explicit UTF-8 bytes guarantee that state.json never receives a BOM.
+        state_temporary.write_bytes(json.dumps(state, indent=2).encode("utf-8"))
+        if os.name != "nt":
+            _protect_private_path(key_temporary)
+            _protect_private_path(state_temporary)
+        if PRIVATE_KEY_PATH.exists() or STATE_PATH.exists():
+            raise RuntimeError(
+                "Another process created runtime identity files during initialization."
+            )
+        key_temporary.replace(PRIVATE_KEY_PATH)
+        _protect_private_path(PRIVATE_KEY_PATH)
+        state_temporary.replace(STATE_PATH)
+        _protect_private_path(STATE_PATH)
+    finally:
+        key_temporary.unlink(missing_ok=True)
+        state_temporary.unlink(missing_ok=True)
+
+
+def initialize_runtime_identity() -> tuple[dict[str, Any], Ed25519PrivateKey]:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    state_exists = STATE_PATH.exists()
+    key_exists = PRIVATE_KEY_PATH.exists()
+
+    if state_exists != key_exists:
+        raise RuntimeError(
+            f"Veyra runtime identity at {STATE_DIR} is incomplete. "
+            "Existing private files were preserved and no identity was regenerated."
+        )
+
+    if state_exists:
+        state = _read_state_file()
+        _validate_state_identity(state)
+        private_key = _load_private_key()
+        public_key = _public_key_text(private_key)
+        _validate_state_identity(state, expected_public_key=public_key)
+        _protect_private_path(STATE_DIR, directory=True)
+        _protect_private_path(STATE_PATH)
+        _protect_private_path(PRIVATE_KEY_PATH)
+        return state, private_key
+
+    private_key = Ed25519PrivateKey.generate()
+    state = _new_state(_public_key_text(private_key))
+    _write_new_identity(state, private_key)
+    _protect_private_path(STATE_DIR, directory=True)
+    return state, private_key
+
+
+INITIAL_STATE, PRIVATE_KEY = initialize_runtime_identity()
+PUBLIC_KEY_TEXT = _public_key_text(PRIVATE_KEY)
+
+
 def load_state() -> dict[str, Any]:
     with STATE_LOCK:
         if not STATE_PATH.exists():
-            state = default_state()
-            save_state(state)
-            return state
-        try:
-            # PowerShell 5.1 writes UTF-8 with a BOM when -Encoding UTF8 is used.
-            # utf-8-sig accepts both BOM and non-BOM JSON safely.
-            state = json.loads(STATE_PATH.read_text(encoding="utf-8-sig"))
-            if not isinstance(state, dict):
-                raise ValueError("Runtime state root must be a JSON object.")
-        except Exception as exc:
-            # Never replace an unreadable paired state with a fresh identity.
-            # That would orphan the authenticated runtime and strand paid jobs.
             raise RuntimeError(
-                f"Unable to read Veyra runtime state at {STATE_PATH}. "
-                "The file was preserved and was not replaced."
-            ) from exc
+                f"Veyra runtime state at {STATE_PATH} disappeared after startup. "
+                "No replacement identity was generated."
+            )
+        state = _read_state_file()
+        _validate_state_identity(state, expected_public_key=PUBLIC_KEY_TEXT)
         required = default_state()
         for key, value in required.items():
             state.setdefault(key, value)
@@ -177,9 +326,13 @@ def load_state() -> dict[str, Any]:
 
 def save_state(state: dict[str, Any]) -> None:
     with STATE_LOCK:
+        _validate_state_identity(state, expected_public_key=PUBLIC_KEY_TEXT)
         temporary = STATE_PATH.with_suffix(".tmp")
-        temporary.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        temporary.write_bytes(json.dumps(state, indent=2).encode("utf-8"))
+        if os.name != "nt":
+            _protect_private_path(temporary)
         temporary.replace(STATE_PATH)
+        _protect_private_path(STATE_PATH)
 
 
 def rotate_connection_token() -> dict[str, Any]:
@@ -187,9 +340,16 @@ def rotate_connection_token() -> dict[str, Any]:
         state = load_state()
         if state.get("runtime_credential"):
             raise RuntimeError("Disconnect the existing Veyra agent before generating another link.")
+        current_token = str(state.get("one_time_token") or "")
+        revoked_hashes = list(state.get("revoked_token_hashes") or [])
+        if current_token:
+            revoked_hashes.append(token_digest(current_token))
+        issued_at = int(time.time())
         state["one_time_token"] = secrets.token_urlsafe(36)
-        state["token_expires_at"] = int(time.time()) + TOKEN_TTL_SECONDS
+        state["token_issued_at"] = issued_at
+        state["token_expires_at"] = issued_at + TOKEN_TTL_SECONDS
         state["token_consumed"] = False
+        state["revoked_token_hashes"] = list(dict.fromkeys(revoked_hashes))[-20:]
         save_state(state)
         return state
 
@@ -205,6 +365,19 @@ def connection_link(state: dict[str, Any] | None = None) -> str:
     return (
         f"veyra-connect://{public_netloc()}/connect/"
         f"{current['one_time_token']}?protocol={PROTOCOL_VERSION}"
+    )
+
+
+def token_digest(token: str) -> str:
+    return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+
+
+def connection_link_expiry(state: dict[str, Any]) -> str:
+    expires_at = int(state.get("token_expires_at") or 0)
+    return (
+        datetime.fromtimestamp(expires_at, timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
     )
 
 
@@ -239,13 +412,21 @@ def provider_health(*, force: bool = False) -> tuple[bool, str]:
 
 
 def token_is_valid(state: dict[str, Any], token: str) -> tuple[bool, str]:
-    if state.get("token_consumed"):
-        return False, "This connection link has already been used."
-    if int(state.get("token_expires_at") or 0) <= int(time.time()):
-        return False, "This connection link has expired. Generate a new one."
-    if not secrets.compare_digest(str(state.get("one_time_token") or ""), str(token or "")):
-        return False, "The one-time connection token is invalid."
-    return True, ""
+    supplied_token = str(token or "")
+    current_token = str(state.get("one_time_token") or "")
+    if secrets.compare_digest(current_token, supplied_token):
+        if state.get("token_consumed"):
+            return False, "This connection link has already been used."
+        if int(state.get("token_expires_at") or 0) <= int(time.time()):
+            return False, "This connection link has expired. Generate a new one."
+        return True, ""
+    supplied_digest = token_digest(supplied_token)
+    if any(
+        secrets.compare_digest(value, supplied_digest)
+        for value in state.get("revoked_token_hashes") or []
+    ):
+        return False, "This connection link was revoked when a newer link was generated."
+    return False, "This connection link is invalid."
 
 
 def refresh_agent_configuration(state: dict[str, Any]) -> None:
@@ -1921,7 +2102,13 @@ class Handler(BaseHTTPRequestHandler):
             except RuntimeError as exc:
                 self._send_json(HTTPStatus.CONFLICT, {"detail": str(exc)})
                 return
-            self._send_json(HTTPStatus.CREATED, {"connection_link": connection_link(state)})
+            self._send_json(
+                HTTPStatus.CREATED,
+                {
+                    "connection_link": connection_link(state),
+                    "expires_at": connection_link_expiry(state),
+                },
+            )
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"detail": "Not found."})
 
@@ -2009,6 +2196,7 @@ class Handler(BaseHTTPRequestHandler):
         ready, provider_message = provider_health()
         connected = bool(state.get("runtime_credential"))
         expired = int(state.get("token_expires_at") or 0) <= int(time.time())
+        expiry_label = connection_link_expiry(state)
         link = "Connected to Veyra" if connected else connection_link(state)
         status_label = "Connected" if connected else ("Link expired" if expired else "Ready to connect")
         status_class = "ok" if connected and ready else "warn" if not ready or expired else "ready"
@@ -2043,6 +2231,7 @@ button.secondary{{background:#203541;color:#edf7f4}} .pill{{display:inline-block
 </style></head><body><main>
 <h1>Veyra Hosted {runtime_role}</h1><p>The owner-paid AI key stays on this server. Copy only the connection link into Veyra.</p>
 <div class='card'><span class='pill {status_class}'>{status_label}</span><h2>Connection link</h2><code id='link'>{safe_link}</code><br>
+<p>Expires at: <time id='link-expiry'>{html.escape(expiry_label)}</time></p>
 <button onclick='copyLink()' {'disabled' if connected else ''}>Copy Veyra connection link</button>
 <button class='secondary' onclick='rotateLink()' {'disabled' if connected else ''}>Generate new link</button></div>
 <div class='card'><h2>Runtime status</h2><dl>
@@ -2057,7 +2246,7 @@ button.secondary{{background:#203541;color:#edf7f4}} .pill{{display:inline-block
 <dt>Verification detail</dt><dd>{verification_message}</dd></dl></div>
 <script>
 async function copyLink(){{const text=document.getElementById('link').innerText;await navigator.clipboard.writeText(text);alert('Connection link copied');}}
-async function rotateLink(){{const r=await fetch('/veyra/connect/rotate',{{method:'POST'}});const j=await r.json();if(!r.ok){{alert(j.detail||'Could not rotate link');return}}document.getElementById('link').innerText=j.connection_link;}}
+async function rotateLink(){{const r=await fetch('/veyra/connect/rotate',{{method:'POST'}});const j=await r.json();if(!r.ok){{alert(j.detail||'Could not rotate link');return}}document.getElementById('link').innerText=j.connection_link;document.getElementById('link-expiry').innerText=j.expires_at;}}
 </script></main></body></html>"""
         raw = body.encode("utf-8")
         self.send_response(HTTPStatus.OK)
@@ -2082,8 +2271,8 @@ def main() -> None:
     if state.get("runtime_credential"):
         print(f"Connected agent: {state.get('agent_name') or state.get('agent_id')}")
     else:
-        print("Connection link:")
-        print(connection_link(state))
+        print(f"Connection link ready (expires {connection_link_expiry(state)}).")
+        print("Open the dashboard to copy it; the token is not written to logs.")
     print("\nKeep this terminal open. Never paste AI_API_KEY into Veyra.\n")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 

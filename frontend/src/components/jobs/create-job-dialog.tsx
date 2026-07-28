@@ -829,7 +829,7 @@ export function CreateJobDialog({
                 <div className="mt-4">
                   <GitHubAppConnection
                     compact
-                    returnPath="/dashboard/jobs?github=connected"
+                    returnPath="/client/jobs?github=connected"
                     onStatusChange={handleGitHubStatus}
                   />
                 </div>

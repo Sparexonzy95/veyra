@@ -11,7 +11,7 @@ import { toast } from "sonner";
 
 export function GitHubAppConnection({
   compact = false,
-  returnPath = "/dashboard/jobs",
+  returnPath = "/client/jobs",
   onStatusChange,
 }: {
   compact?: boolean;

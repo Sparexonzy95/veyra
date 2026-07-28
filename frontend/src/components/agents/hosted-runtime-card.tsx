@@ -88,7 +88,7 @@ export function HostedRuntimeCard({
                   : "outline"
             }
           >
-            {ready ? "Online" : runtime.status.replaceAll("_", " ").toLowerCase()}
+            {ready ? "Active" : runtime.status === "UNHEALTHY" ? "Needs attention" : "Offline"}
           </Badge>
         </div>
         <p className="text-sm text-muted-foreground">
@@ -103,7 +103,7 @@ export function HostedRuntimeCard({
             <div>
               <p className="font-medium">Secure connection active</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Last connected: {runtime.last_seen_at ? new Date(runtime.last_seen_at).toLocaleString() : "Just now"}.
+                Provider readiness: {runtime.provider_ready ? "Ready" : "Needs attention"}.
               </p>
             </div>
           </div>
@@ -112,14 +112,18 @@ export function HostedRuntimeCard({
         <details className="rounded-xl border bg-muted/20 p-4 text-sm">
           <summary className="cursor-pointer font-medium">Technical details</summary>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div><p className="text-xs text-muted-foreground">Runtime ID</p><p className="mt-1 break-all font-mono text-xs">{runtime.runner_id || "Not connected"}</p></div>
             <div><p className="text-xs text-muted-foreground">Provider</p><p className="mt-1 font-medium">{runtime.provider || "Not verified"}</p></div>
             <div><p className="text-xs text-muted-foreground">Model</p><p className="mt-1 font-medium">{runtime.model || "Not verified"}</p></div>
             <div><p className="text-xs text-muted-foreground">Agent version</p><p className="mt-1 font-medium">{runtime.runner_version || "Not connected"}</p></div>
-            <div><p className="text-xs text-muted-foreground">Protocol</p><p className="mt-1 font-medium">{runtime.protocol_version || "Not connected"}</p></div>
+            <div><p className="text-xs text-muted-foreground">Protocol version</p><p className="mt-1 font-medium">{runtime.protocol_version || "Not connected"}</p></div>
+            <div><p className="text-xs text-muted-foreground">Last heartbeat</p><p className="mt-1 font-medium">{runtime.last_seen_at ? new Date(runtime.last_seen_at).toLocaleString() : "Not connected"}</p></div>
+            <div><p className="text-xs text-muted-foreground">Internal connection state</p><p className="mt-1 font-medium">{runtime.status}</p></div>
+            <div><p className="text-xs text-muted-foreground">Full wallet address</p><p className="mt-1 break-all font-mono text-xs">{agent.worker_wallet_address || "Not created"}</p></div>
           </div>
           {runtime.public_key_fingerprint ? (
             <p className="mt-4 break-all border-t pt-4 font-mono text-[11px] text-muted-foreground">
-              Signing key: {runtime.public_key_fingerprint}
+              Signing fingerprint: {runtime.public_key_fingerprint}
             </p>
           ) : null}
         </details>
@@ -133,11 +137,11 @@ export function HostedRuntimeCard({
                   {ready ? "Automatic setup needs attention" : "Connection or provisioning needs attention"}
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {agent.provisioning_error ||
-                    runtime.health_message ||
-                    (ready
-                      ? "The agent is online. Retry will reuse this connection and continue the remaining setup."
-                      : "Paste a fresh connection link and retry.")}
+                  {ready
+                    ? "The agent is online. Retry will reuse this connection and continue the remaining setup."
+                    : agent.provisioning_error || runtime.health_message
+                      ? "The connection needs attention. Check the Agent Starter, then retry."
+                      : "Paste a fresh connection link and retry."}
                 </p>
               </div>
             </div>

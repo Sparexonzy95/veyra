@@ -36,8 +36,18 @@ cd C:\Users\cashkink\Downloads\Veyra-backend\veyra-agent-test-server
 ```
 
 Open `http://127.0.0.1:9100`. The dashboard shows the connection, heartbeat,
-and automatic qualification status. Existing `.veyra-runtime` credentials are
-reused, so a connected test agent does not need a new connection link.
+and automatic qualification status.
+
+On the first start, the runtime creates a private `.veyra-runtime` directory
+with a unique runtime ID and Ed25519 signing identity, then displays the
+connection URL. Copy that URL into Veyra's **Test & Connect** flow; no pairing
+code is required. Restarts validate and reuse the same identity. If either the
+state file or signing key is missing, corrupt, or mismatched, startup stops
+without replacing the existing private files.
+
+To run an independent starter on another port, set both `RUNTIME_PORT` and
+`RUNTIME_PUBLIC_PORT` in its local `.env`. For example, the isolated
+`Veyra-Agent-Starter-Test-2` copy uses port `9300`.
 
 ## Reset this local test identity
 
