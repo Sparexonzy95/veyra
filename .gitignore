@@ -44,3 +44,6 @@ Thumbs.db
 *.sha256.txt
 _database_backups/
 veyra-client-backend/*.json
+
+# Local recovery backups
+_patch_backups/
