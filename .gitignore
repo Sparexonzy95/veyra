@@ -11,9 +11,15 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
 db.sqlite3
+*.sqlite
+*.sqlite3
+*.db
 
 # Django
 staticfiles/
@@ -29,6 +35,10 @@ coverage/
 
 # Logs and temporary files
 *.log
+*.bak
+*.backup
+*.before-*
+*.tmp
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -43,7 +53,14 @@ Thumbs.db
 *.zip
 *.sha256.txt
 _database_backups/
-veyra-client-backend/*.json
+_safe_source_backups/
+_runtime_identity_backups/
+backend/*.json
 
 # Local recovery backups
 _patch_backups/
+
+# Owner-hosted runtime state and disposable workspaces
+.veyra-runtime/
+workspaces/
+.workspaces/

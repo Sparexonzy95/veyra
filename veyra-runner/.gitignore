@@ -1,5 +1,0 @@
-.venv/
-__pycache__/
-*.pyc
-runner.local.json
-device.key

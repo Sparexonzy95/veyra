@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference = "Stop"
 
 $projectRoot = $PSScriptRoot
-$backendPath = Join-Path $projectRoot "veyra-client-backend"
+$backendPath = Join-Path $projectRoot "backend"
 $pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $pythonPath)) {
