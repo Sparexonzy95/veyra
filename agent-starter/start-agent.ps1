@@ -7,10 +7,7 @@ $stateDir = Join-Path $root ".veyra-runtime"
 $statePath = Join-Path $stateDir "state.json"
 
 if (-not (Test-Path -LiteralPath $envFile)) {
-    Copy-Item (Join-Path $root ".env.example") $envFile
-    Write-Host "Created .env. Add the owner-paid AI_API_KEY, then run this script again." -ForegroundColor Yellow
-    notepad $envFile
-    exit 1
+    throw "agent-starter/.env is missing. This launcher will not create or modify it."
 }
 
 $runtimePort = [Environment]::GetEnvironmentVariable("RUNTIME_PORT", "Process")
@@ -24,7 +21,7 @@ if ([string]::IsNullOrWhiteSpace($runtimePort)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($runtimePort)) {
-    $runtimePort = "9100"
+    throw "RUNTIME_PORT must be configured in agent-starter/.env."
 }
 
 $parsedPort = 0
@@ -35,9 +32,7 @@ if (-not [int]::TryParse($runtimePort, [ref]$parsedPort) -or $parsedPort -lt 1 -
 # Refuse to hide another runtime behind this starter's configured port.
 $listener = Get-NetTCPConnection -LocalPort $parsedPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($listener) {
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
-    $command = if ($process) { $process.CommandLine } else { "Unknown command" }
-    throw "Port $parsedPort is already in use by PID $($listener.OwningProcess): $command`nStop that process before starting this Veyra Agent Starter."
+    throw "Port $parsedPort is already in use. Stop that service before starting this Veyra Agent Starter."
 }
 
 # Pin the runtime to this exact project directory. These process-level values
@@ -49,9 +44,8 @@ if (Test-Path -LiteralPath $statePath) {
     Write-Host "Reusing the existing Veyra runtime identity." -ForegroundColor Cyan
 }
 else {
-    Write-Host "No runtime identity exists yet. Creating a new private identity for this starter." -ForegroundColor Cyan
+    throw "No existing Veyra runtime identity was found. Identity generation is disabled for local stack startup."
 }
-Write-Host "State directory: $stateDir" -ForegroundColor Cyan
 Write-Host "Listening port: $parsedPort" -ForegroundColor Cyan
 
 $projectRoot = Split-Path -Parent $root
