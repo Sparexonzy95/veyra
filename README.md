@@ -101,7 +101,28 @@ Deployment and environment boundaries are in
 
 ## Local Windows startup
 
-The root keeps only the useful entry points:
+Start the complete configured local stack in separate PowerShell windows:
+
+```powershell
+cd C:\Users\cashkink\Downloads\Veyra-backend
+Set-ExecutionPolicy -Scope Process Bypass
+.\Start-Veyra-Local.ps1
+```
+
+Stop only the Veyra process trees created by that launcher. PostgreSQL remains
+running:
+
+```powershell
+.\Stop-Veyra-Local.ps1
+```
+
+The launcher does not create or modify `.env` files and never generates an Agent
+Starter identity. If `agent-starter\.veyra-runtime` is absent, it safely restores
+the existing demo identity from the matching local Agent Starter test directory,
+without replacing an existing destination. Launcher PID state and ignored logs
+are kept under `.veyra-local\`.
+
+The individual root entry points remain available:
 
 ```powershell
 .\start-backend.ps1
