@@ -13,8 +13,31 @@ export default {
         titillium: ["var(--font-titillium-web)"],
       },
       colors: {
+        veyra: {
+          /* Canvas and elevated surfaces. */
+          ink: "#050505",
+          "ink-soft": "#0E0C0A",
+          "ink-raised": "#17130F",
+          graphite: "#2B2723",
+          "graphite-light": "#3E332A",
+
+          /* Accent family: light fields, highlights, gradient depth. */
+          "sand-deep": "#80674F",
+          "sand-mid": "#A98A65",
+          sand: "#C4AD8D",
+          "sand-light": "#E3D2BB",
+
+          /* Text roles. cream/muted read on dark, ink/graphite on light. */
+          cream: "#F5EDE2",
+          "cream-bright": "#FFF9F1",
+          muted: "#CDBDA9",
+          "muted-dark": "#9A8874",
+        },
+
+
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
+
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",

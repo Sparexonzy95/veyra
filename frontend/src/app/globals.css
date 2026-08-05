@@ -1,4 +1,5 @@
 @import url("https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -6,6 +7,32 @@
 
 @layer base {
   :root {
+    /* -----------------------------------------------------------
+       Veyra colour system.
+       Roles, not decoration: ink is the canvas, raised ink is every
+       elevated surface, cream and muted carry text on dark, and the
+       sand family is reserved for light fields and accents.
+       ----------------------------------------------------------- */
+    --veyra-ink: #050505;
+    --veyra-ink-soft: #0e0c0a;
+    --veyra-ink-raised: #17130f;
+    --veyra-graphite: #2b2723;
+    --veyra-graphite-light: #3e332a;
+
+    --veyra-sand-deep: #80674f;
+    --veyra-sand-mid: #a98a65;
+    --veyra-sand: #c4ad8d;
+    --veyra-sand-light: #e3d2bb;
+
+    --veyra-cream: #f5ede2;
+    --veyra-cream-bright: #fff9f1;
+    --veyra-muted: #cdbda9;
+    --veyra-muted-dark: #9a8874;
+
+    --veyra-border-dark: rgba(245, 237, 226, 0.16);
+    --veyra-border-dark-soft: rgba(245, 237, 226, 0.1);
+    --veyra-border-light: rgba(5, 5, 5, 0.14);
+
     --background: 36 38% 96%;
     --foreground: 24 14% 11%;
     --card: 40 100% 99%;
@@ -95,43 +122,829 @@ html {
     linear-gradient(hsl(var(--background)), hsl(var(--background)));
 }
 
-.landing-grid {
-  background-image:
-    linear-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(255 255 255 / 0.045) 1px, transparent 1px);
-  background-size: 64px 64px;
-  mask-image: linear-gradient(to bottom, black, transparent 88%);
+/* ===============================================================
+   LANDING ROOT
+   The landing page owns its own font. The dashboard and every
+   application surface keep the existing Titillium system.
+   =============================================================== */
+
+.veyra-landing {
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  /* clip rather than hidden: it cannot become a scroll container, so
+     decorative wave layers cannot silently hide a real layout error. */
+  overflow-x: clip;
 }
 
-.landing-orb {
+@supports not (overflow: clip) {
+  .veyra-landing {
+    overflow-x: hidden;
+  }
+}
+
+/* Skip link: invisible until focused. */
+.veyra-skip-link {
   position: absolute;
+  left: 50%;
+  top: 0.75rem;
+  z-index: 100;
+  translate: -50% -200%;
   border-radius: 9999px;
-  filter: blur(70px);
-  opacity: 0.42;
+  background: var(--veyra-cream);
+  color: var(--veyra-ink);
+  padding: 0.75rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
 }
 
-.landing-orb-one {
-  left: 8%;
-  top: 16%;
-  height: 23rem;
-  width: 23rem;
-  background: #8b4c28;
+.veyra-skip-link:focus-visible {
+  translate: -50% 0;
+  outline: 2px solid var(--veyra-sand);
+  outline-offset: 2px;
 }
 
-.landing-orb-two {
-  right: 4%;
-  top: 26%;
-  height: 27rem;
-  width: 27rem;
-  background: #d6a263;
-  opacity: 0.22;
+/* ===============================================================
+   LANDING LAYOUT
+   =============================================================== */
+
+.veyra-container {
+  width: min(1240px, calc(100% - 40px));
+  margin-inline: auto;
 }
+
+@media (min-width: 768px) {
+  .veyra-container {
+    width: min(1240px, calc(100% - 48px));
+  }
+}
+
+/* Section rhythm: 64 mobile / 84 tablet / 104 desktop. */
+.veyra-section {
+  padding-block: 4rem;
+}
+
+@media (min-width: 768px) {
+  .veyra-section {
+    padding-block: 5.25rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .veyra-section {
+    padding-block: 6.5rem;
+  }
+}
+
+/* Gap between the heading block and the section content. */
+.veyra-section-body {
+  margin-top: 2.5rem;
+}
+
+@media (min-width: 1024px) {
+  .veyra-section-body {
+    margin-top: 3.5rem;
+  }
+}
+
+/* Anchor offset so the sticky navbar never covers a heading. */
+.veyra-anchor {
+  scroll-margin-top: 104px;
+}
+
+/* ===============================================================
+   TYPE SCALE
+   One system, deliberately few sizes.
+   =============================================================== */
+
+.veyra-h1 {
+  font-size: clamp(2.5rem, 4.8vw, 4.85rem);
+  font-weight: 700;
+  line-height: 0.98;
+  letter-spacing: -0.045em;
+  max-width: 940px;
+}
+
+.veyra-h2 {
+  font-size: clamp(2.1rem, 3.4vw, 3.2rem);
+  font-weight: 700;
+  line-height: 1.06;
+  letter-spacing: -0.035em;
+  max-width: 800px;
+}
+
+/* Cinematic CTA headline. 30-36px mobile, 40-48px desktop. */
+.veyra-h2-cta {
+  font-size: clamp(1.875rem, 3.4vw, 3rem);
+  font-weight: 700;
+  line-height: 1.06;
+  letter-spacing: -0.035em;
+  max-width: 900px;
+}
+
+/* Hero supporting copy: 16px mobile, 18-19px desktop. */
+.veyra-hero-lede {
+  font-size: clamp(1rem, 1.3vw, 1.1875rem);
+  font-weight: 400;
+  line-height: 1.6;
+  max-width: 680px;
+}
+
+/* Section supporting sentence. */
+.veyra-lede {
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.6;
+  max-width: 650px;
+}
+
+.veyra-card-title {
+  font-size: clamp(1.25rem, 1.6vw, 1.5rem);
+  font-weight: 650;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
+}
+
+/* Problem panels and timeline cards: 21-23px. */
+.veyra-card-title-lg {
+  font-size: clamp(1.3125rem, 1.55vw, 1.4375rem);
+  font-weight: 650;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
+}
+
+/* Trust grid: a steady 20px so four columns stay even. */
+.veyra-card-title-sm {
+  font-size: 1.25rem;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+/* Economy cards carry the largest card heading on the page. */
+.veyra-card-title-xl {
+  font-size: clamp(1.5rem, 2vw, 1.875rem);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.028em;
+}
+
+.veyra-card-body {
+  font-size: 0.95rem;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+/* Problem panels and timeline: 16px. */
+.veyra-card-body-lg {
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+/* Trust infrastructure body. Four narrow columns are the hardest reading
+   condition on the page, so this is a step up from the shared card body:
+   15px minimum at 1.6, never the 0.95rem used elsewhere. */
+.veyra-trust-body {
+  font-size: 0.9375rem;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+/* Matching padding: the shared card padding plus roughly 4px, so the extra
+   line-height has somewhere to sit. */
+.veyra-trust-card {
+  padding: 1.75rem;
+}
+
+@media (min-width: 768px) {
+  .veyra-trust-card {
+    padding: 2.25rem;
+  }
+}
+
+
+.veyra-nav-link {
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+.veyra-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.veyra-footer-label {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Card padding: 24 mobile, 32 desktop. */
+.veyra-card-pad {
+  padding: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  .veyra-card-pad {
+    padding: 2rem;
+  }
+}
+
+/* Timeline cards: 24 mobile, 30-34 desktop, with a controlled min height. */
+.veyra-timeline-card {
+  padding: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  .veyra-timeline-card {
+    padding: 1.875rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .veyra-timeline-card {
+    min-height: 200px;
+    padding: 2.125rem;
+  }
+}
+
+/* Larger cards: 24 mobile, 36-40 desktop. */
+.veyra-card-pad-lg {
+  padding: 1.5rem;
+}
+
+@media (min-width: 768px) {
+
+  .veyra-card-pad-lg {
+    padding: 2.25rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .veyra-card-pad-lg {
+    padding: 2.5rem;
+  }
+}
+
+/* ===============================================================
+   SURFACES
+   =============================================================== */
+
+.veyra-surface-raised {
+  background: var(--veyra-ink-raised);
+  border: 1px solid var(--veyra-border-dark);
+}
+
+/* ---------------------------------------------------------------
+   Navigation glass.
+   Dark translucent so it stays readable over ink sections and over
+   the luminous sand field in the hero.
+   --------------------------------------------------------------- */
+
+.veyra-nav-shell {
+  width: min(1040px, calc(100% - 32px));
+  margin-inline: auto;
+}
+
+@media (min-width: 768px) {
+  .veyra-nav-shell {
+    width: min(1040px, calc(100% - 48px));
+  }
+}
+
+/* Fallback first: no blur available, so the surface must carry legibility
+   on opacity alone. */
+.veyra-nav-glass {
+  background: rgba(14, 12, 10, 0.88);
+  border: 1px solid rgba(245, 237, 226, 0.14);
+  box-shadow:
+    0 10px 34px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 249, 241, 0.04);
+}
+
+/* Real glass: the alpha drops so page content genuinely shows through the
+   blur while scrolling.
+
+   These are two separate at-rules on purpose, and they must stay that way.
+   Written as one combined `(a) or (b)` condition with both properties in the
+   same block, the CSS minifier collapsed the pair down to the -webkit-
+   property alone. Firefox satisfies the condition but does not implement the
+   prefixed property, so it took the low-alpha background with no blur at all:
+   a barely-tinted, unreadable bar.
+
+   Split this way, each engine's low-alpha background is tied to the exact
+   property it just proved it supports, so the background can never drop
+   without the blur that justifies it. */
+@supports (backdrop-filter: blur(1px)) {
+  .veyra-nav-glass {
+    background: rgba(14, 12, 10, 0.52);
+    backdrop-filter: blur(24px) saturate(140%);
+  }
+}
+
+@supports (-webkit-backdrop-filter: blur(1px)) {
+  .veyra-nav-glass {
+    background: rgba(14, 12, 10, 0.52);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+  }
+}
+
+
+
+/* ===============================================================
+   HERO PROPORTIONS
+   Content-driven: min-height is a floor, never a fixed height.
+   =============================================================== */
+
+.veyra-hero-pad {
+  padding-block: 8rem 8.5rem;
+}
+
+@media (min-width: 640px) {
+  .veyra-hero-pad {
+    min-height: 680px;
+    padding-block: 10rem 12.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .veyra-hero-pad {
+    min-height: 780px;
+    padding-block: 12.25rem 16.25rem;
+  }
+}
+
+/* Short landscape phones: give the fold back to the content. */
+@media (max-height: 620px) and (orientation: landscape) {
+  .veyra-hero-pad {
+    min-height: 0;
+    padding-block: 6.5rem 7.5rem;
+  }
+}
+
+/* ===============================================================
+   GRADIENT FIELDS
+   Every field below is anchored to an edge. None of them float.
+   =============================================================== */
+
+/* Card lighting anchored to the lower edge of a card. */
+.veyra-card-glow::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 58%;
+  background: radial-gradient(
+    ellipse at bottom,
+    rgba(227, 210, 187, 0.34) 0%,
+    rgba(196, 173, 141, 0.22) 27%,
+    rgba(128, 103, 79, 0.14) 53%,
+    transparent 78%
+  );
+  pointer-events: none;
+}
+
+/* Focused sand glow used inside the square problem panels. */
+.veyra-panel-glow {
+  background: radial-gradient(
+    circle at 50% 58%,
+    rgba(255, 249, 241, 0.9) 0%,
+    rgba(227, 210, 187, 0.72) 22%,
+    rgba(169, 138, 101, 0.44) 48%,
+    transparent 72%
+  );
+}
+
+/* Cinematic panel: broad diagonal light field anchored to the left edge. */
+.veyra-panel-field {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    var(--veyra-graphite-light) 0%,
+    var(--veyra-sand-deep) 24%,
+    var(--veyra-sand) 48%,
+    var(--veyra-cream) 65%,
+    var(--veyra-sand-mid) 82%,
+    var(--veyra-ink-raised) 100%
+  );
+  pointer-events: none;
+}
+
+/* Keeps the cinematic headline readable over the bright field. */
+.veyra-panel-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to right,
+    rgba(5, 5, 5, 0.92) 0%,
+    rgba(5, 5, 5, 0.8) 44%,
+    rgba(5, 5, 5, 0.42) 72%,
+    rgba(5, 5, 5, 0.14) 100%
+  );
+  pointer-events: none;
+}
+
+@media (max-width: 767px) {
+  .veyra-panel-scrim {
+    background: linear-gradient(
+      to bottom,
+      rgba(5, 5, 5, 0.9) 0%,
+      rgba(5, 5, 5, 0.84) 52%,
+      rgba(5, 5, 5, 0.66) 100%
+    );
+  }
+}
+
+/* ===============================================================
+   ANIMATED WAVES
+   CSS only. Transform and opacity only. Each layer is clipped by
+   its own field so drift can never create horizontal overflow.
+   =============================================================== */
+
+.veyra-wave-field {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 40%;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+@media (min-width: 1024px) {
+  .veyra-wave-field {
+    height: 46%;
+  }
+}
+
+/*
+  Motion note. The previous revision animated percentage translations
+  (translate3d(-2.4%, ...)). A percentage on a soft radial gradient of this
+  size resolves to only a few dozen pixels and, spread across an ease-in-out
+  alternate cycle, the layer spends most of its time near a turning point.
+  The result computed as "running" but read as static.
+
+  Every wave keyframe below now uses absolute pixel translation so the
+  distance is explicit and observable, and the layers move on different
+  axes and durations so they visibly separate from one another.
+*/
+
+.veyra-wave-layer {
+  position: absolute;
+  inset-inline: -18%;
+  top: 0;
+  bottom: -8%;
+  pointer-events: none;
+  transform-origin: center bottom;
+  will-change: transform, opacity;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+
+/* ---- hero -------------------------------------------------- */
+
+.veyra-hero-wave-a {
+  border-radius: 50% 50% 0 0 / 26% 26% 0 0;
+  background:
+    radial-gradient(
+      78% 118% at 26% 100%,
+      rgba(227, 210, 187, 0.95) 0%,
+      rgba(196, 173, 141, 0.74) 26%,
+      rgba(128, 103, 79, 0.44) 54%,
+      transparent 80%
+    ),
+    linear-gradient(to top, var(--veyra-graphite-light) 0%, rgba(23, 19, 15, 0) 86%);
+  animation-name: veyraHeroWavePrimary;
+  animation-duration: 22s;
+}
+
+.veyra-hero-wave-b {
+  border-radius: 50% 50% 0 0 / 30% 30% 0 0;
+  background: radial-gradient(
+    64% 108% at 72% 100%,
+    rgba(169, 138, 101, 0.72) 0%,
+    rgba(128, 103, 79, 0.42) 36%,
+    transparent 74%
+  );
+  animation-name: veyraHeroWaveSecondary;
+  animation-duration: 27s;
+}
+
+.veyra-hero-wave-glow {
+  border-radius: 50% 50% 0 0 / 34% 34% 0 0;
+  background: radial-gradient(
+    46% 92% at 62% 100%,
+    rgba(255, 249, 241, 0.82) 0%,
+    rgba(245, 237, 226, 0.34) 34%,
+    transparent 70%
+  );
+  animation-name: veyraHeroWaveHighlight;
+  animation-duration: 18s;
+}
+
+/* Primary: 42px horizontal, 14px vertical, 1.02 -> 1.07. */
+@keyframes veyraHeroWavePrimary {
+  from {
+    transform: translate3d(-21px, 7px, 0) scale(1.02);
+  }
+  to {
+    transform: translate3d(21px, -7px, 0) scale(1.07);
+  }
+}
+
+/* Secondary: opposite direction, 34px horizontal, 10px vertical. */
+@keyframes veyraHeroWaveSecondary {
+  from {
+    transform: translate3d(17px, -5px, 0) scale(1.05);
+  }
+  to {
+    transform: translate3d(-17px, 5px, 0) scale(1.01);
+  }
+}
+
+/* Highlight: gentle drift plus opacity breathing. */
+@keyframes veyraHeroWaveHighlight {
+  from {
+    transform: translate3d(-13px, 8px, 0) scale(1);
+    opacity: 0.5;
+  }
+  to {
+    transform: translate3d(13px, -8px, 0) scale(1.08);
+    opacity: 0.95;
+  }
+}
+
+/* ---- footer ------------------------------------------------ */
+/* Separate keyframe names and longer durations: the footer reads as a
+   calmer echo of the hero rather than a copy of it. */
+
+.veyra-footer-wave-a {
+  border-radius: 50% 50% 0 0 / 44% 44% 0 0;
+  background:
+    radial-gradient(
+      54% 116% at 14% 100%,
+      rgba(169, 138, 101, 0.72) 0%,
+      rgba(128, 103, 79, 0.38) 44%,
+      transparent 74%
+    ),
+    linear-gradient(to top, var(--veyra-graphite) 0%, rgba(5, 5, 5, 0) 88%);
+  animation-name: veyraFooterWavePrimary;
+  animation-duration: 32s;
+}
+
+.veyra-footer-wave-b {
+  border-radius: 50% 50% 0 0 / 48% 48% 0 0;
+  background: radial-gradient(
+    44% 108% at 56% 100%,
+    rgba(196, 173, 141, 0.6) 0%,
+    rgba(196, 173, 141, 0) 70%
+  );
+  animation-name: veyraFooterWaveSecondary;
+  animation-duration: 26s;
+}
+
+.veyra-footer-wave-glow {
+  border-radius: 50% 50% 0 0 / 52% 52% 0 0;
+  background: radial-gradient(
+    46% 110% at 88% 100%,
+    rgba(245, 237, 226, 0.6) 0%,
+    rgba(245, 237, 226, 0) 68%
+  );
+  animation-name: veyraFooterWaveHighlight;
+  animation-duration: 22s;
+}
+
+/* Footer base: 34px horizontal, 8px vertical, 1.02 -> 1.05. */
+@keyframes veyraFooterWavePrimary {
+  from {
+    transform: translate3d(-17px, 4px, 0) scale(1.02);
+  }
+  to {
+    transform: translate3d(17px, -4px, 0) scale(1.05);
+  }
+}
+
+/* Footer secondary: opposite direction, 28px horizontal. */
+@keyframes veyraFooterWaveSecondary {
+  from {
+    transform: translate3d(14px, -3px, 0) scale(1.04);
+  }
+  to {
+    transform: translate3d(-14px, 3px, 0) scale(1);
+  }
+}
+
+/* Footer highlight: scale and opacity breathing only. */
+@keyframes veyraFooterWaveHighlight {
+  from {
+    transform: translate3d(-9px, 4px, 0) scale(0.98);
+    opacity: 0.45;
+  }
+  to {
+    transform: translate3d(9px, -4px, 0) scale(1.07);
+    opacity: 0.85;
+  }
+}
+
+
+/* ===============================================================
+   MISC
+   =============================================================== */
+
+.veyra-snap-track {
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.veyra-snap-track::-webkit-scrollbar {
+  display: none;
+}
+
+.veyra-snap-item {
+  scroll-snap-align: center;
+}
+
+/* Landing entrance animation. Disabled under prefers-reduced-motion. */
+@keyframes veyra-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-veyra-rise {
+  animation: veyra-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ===============================================================
+   SECTION REVEAL
+   Progressive enhancement, and the order of these rules matters.
+
+   Server-rendered HTML ships fully visible: `.veyra-reveal` on its own
+   has no hidden state. Only once the client has hydrated and confirmed
+   the user has not asked for reduced motion does it add `veyra-motion`
+   to the landing root, which is what actually arms the pre-reveal state.
+
+   So if JavaScript never runs, or fails, or the user prefers reduced
+   motion, the content is simply visible. Nothing is ever stranded at
+   opacity: 0.
+   =============================================================== */
+
+.veyra-landing.veyra-motion .veyra-reveal {
+  opacity: 0;
+  transform: translate3d(0, 22px, 0);
+  will-change: transform, opacity;
+  transition:
+    opacity 720ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 720ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--veyra-reveal-delay, 0ms);
+}
+
+/* Directional variants for the alternating desktop timeline. */
+.veyra-landing.veyra-motion .veyra-reveal-left {
+  transform: translate3d(-22px, 14px, 0);
+}
+
+.veyra-landing.veyra-motion .veyra-reveal-right {
+  transform: translate3d(22px, 14px, 0);
+}
+
+/* Panels that read better as a single settling object. */
+.veyra-landing.veyra-motion .veyra-reveal-panel {
+  transform: translate3d(0, 22px, 0) scale(0.99);
+}
+
+/* Shorter travel for supporting strips that should not compete with the
+   sections either side of them. */
+.veyra-landing.veyra-motion .veyra-reveal-tight {
+  transform: translate3d(0, 12px, 0);
+}
+
+
+/* The timeline rail grows from the top rather than drawing like a line. */
+.veyra-landing.veyra-motion .veyra-reveal-rail {
+  transform-origin: top;
+  transform: scaleY(0.94);
+}
+
+/* Revealed state: one rule wins for every variant. */
+.veyra-landing.veyra-motion .veyra-reveal.veyra-revealed {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+.veyra-landing.veyra-motion .veyra-reveal-rail.veyra-revealed {
+  transform: scaleY(1);
+}
+
+/* Motion is finished: stop paying for the compositor hint. */
+.veyra-landing.veyra-motion .veyra-reveal.veyra-reveal-done {
+  will-change: auto;
+  transition: none;
+}
+
+/* Below the timeline cards the mobile layout is single-sided, so the
+   horizontal offsets are dropped and everything rises instead. */
+@media (max-width: 1023px) {
+  .veyra-landing.veyra-motion .veyra-reveal-left,
+  .veyra-landing.veyra-motion .veyra-reveal-right {
+    transform: translate3d(0, 22px, 0);
+  }
+}
+
+/* ===============================================================
+   FAQ ACCORDION
+   grid-template-rows animates without a hardcoded max-height, so the
+   panel is never clipped and never jumps.
+   =============================================================== */
+
+.veyra-faq-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition:
+    grid-template-rows 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  opacity: 0;
+}
+
+.veyra-faq-panel[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.veyra-faq-panel > div {
+  overflow: hidden;
+  min-height: 0;
+}
+
+
+/* ===============================================================
+   REDUCED MOTION
+   The waves stay: only their motion stops, so the final gradient
+   composition remains complete and the page is still finished.
+   =============================================================== */
 
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
   }
+
+  .animate-veyra-rise {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .veyra-wave-layer {
+    animation: none !important;
+    will-change: auto;
+  }
+
+  .veyra-hero-wave-glow,
+  .veyra-footer-wave-glow {
+    opacity: 0.8;
+  }
+
+  /* Reveals collapse to their finished state. The `veyra-motion` class is
+     never applied when reduced motion is on, so these are a second line of
+     defence rather than the primary mechanism: nothing may be left
+     transparent or displaced under any circumstances. */
+  .veyra-landing .veyra-reveal,
+  .veyra-landing.veyra-motion .veyra-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+    will-change: auto;
+  }
+
+  .veyra-landing.veyra-motion .veyra-reveal-rail {
+    transform: none !important;
+  }
+
+  /* The accordion still opens and closes, it simply does so instantly. */
+  .veyra-faq-panel {
+    transition: none !important;
+  }
 }
+
 
 /* Custom Scrollbar Styles */
 ::-webkit-scrollbar {
