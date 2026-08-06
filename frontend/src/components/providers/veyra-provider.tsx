@@ -1,10 +1,11 @@
 "use client";
 
 import { ApiError, apiFetch, postJson } from "@/lib/api";
+import { resolveAuthDestination } from "@/lib/auth-destination";
 import { circleErrorMessage, extractCircleTransactionId } from "@/lib/circle/result";
 import type { CircleSdk, CircleSdkModule, CircleSdkResult } from "@/lib/circle/types";
 import type { CircleSession, MeResponse } from "@/types/veyra";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -28,21 +29,27 @@ export type WalletActionResult = {
   circleTransactionId: string | null;
 };
 
+export type AuthUiPhase =
+  | "initializing"
+  | "idle"
+  | "preparing"
+  | "redirecting"
+  | "exchanging"
+  | "loading-capabilities"
+  | "routing"
+  | "error";
+
 type ContextValue = {
   sdkReady: boolean;
   busy: boolean;
+  authPhase: AuthUiPhase;
   status: string | null;
   error: string | null;
   me: MeResponse | null;
   circleSession: CircleSession | null;
   roleDialogOpen: boolean;
-  emailDialogOpen: boolean;
   walletSetupOpen: boolean;
   loginWithGoogle: () => Promise<void>;
-  requestEmailOtp: (email: string) => Promise<void>;
-  verifyEmailOtp: () => void;
-  closeEmailDialog: () => void;
-  openEmailDialog: () => void;
   chooseClientRole: () => Promise<void>;
   chooseAgentOwnerRole: () => Promise<void>;
   logout: () => Promise<void>;
@@ -172,16 +179,19 @@ function makeCircleModalInteractive(): CircleModalGuard {
 
 export function VeyraProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const sdkRef = useRef<CircleSdk | null>(null);
   const callbackRef = useRef<(result: CircleSdkResult) => Promise<void>>(async () => {});
+  const loginExchangeRef = useRef<Promise<void> | null>(null);
+  const redirectStartedRef = useRef(false);
   const [sdkReady, setSdkReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [authPhase, setAuthPhase] = useState<AuthUiPhase>("initializing");
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [me, setMe] = useState<MeResponse | null>(null);
   const [circleSession, setCircleSession] = useState<CircleSession | null>(null);
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
-  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [walletSetupOpen, setWalletSetupOpen] = useState(false);
 
   const refreshMe = useCallback(async () => {
@@ -198,6 +208,32 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
       throw requestError;
     }
   }, []);
+
+  const routeAuthenticatedUser = useCallback((nextMe: MeResponse) => {
+    if (!nextMe.authenticated || redirectStartedRef.current) return;
+
+    redirectStartedRef.current = true;
+    setBusy(true);
+    setAuthPhase("routing");
+    setStatus("Opening your workspace…");
+    router.replace(resolveAuthDestination(nextMe.capabilities));
+  }, [router]);
+
+  useEffect(() => {
+    if (pathname !== "/login" && redirectStartedRef.current) {
+      redirectStartedRef.current = false;
+      loginExchangeRef.current = null;
+      setBusy(false);
+      setStatus(null);
+      setAuthPhase("idle");
+    }
+  }, [pathname]);
+
+  useEffect(() => {
+    if (pathname === "/login" && sdkReady && me?.authenticated) {
+      routeAuthenticatedUser(me);
+    }
+  }, [me, pathname, routeAuthenticatedUser, sdkReady]);
 
   const executeChallenge = useCallback(async (challengeId: string) => {
     const sdk = sdkRef.current;
@@ -314,57 +350,74 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
   }, [executeChallenge, refreshMe, router]);
 
   const processLogin = useCallback(async (result: CircleSdkResult) => {
-    const previousConfig = readLoginConfig();
-    const authMethod = previousConfig?.loginMethod === "EMAIL" ? "EMAIL" : "GOOGLE";
-    const email = typeof previousConfig?.email === "string" ? previousConfig.email : "";
-    const session: CircleSession = {
-      authMethod,
-      email,
-      encryptionKey: result.encryptionKey,
-      refreshToken: result.refreshToken,
-      userToken: result.userToken,
-      circleUserId: result.userId ?? result.userID ?? "",
-    };
-    saveSession(session);
-    setCircleSession(session);
-    setBusy(true);
-    setError(null);
-    setStatus("Signing you in…");
-    try {
-      const exchange = await postJson<{
-        authenticated: boolean;
-        requires_wallet_setup: boolean;
-      }>("/api/v1/auth/circle/exchange/", {
-        user_token: session.userToken,
-        circle_user_id: session.circleUserId ?? "",
-        auth_method: session.authMethod,
-        email: session.email ?? "",
-        display_name: session.displayName ?? "",
-      });
-      saveLoginConfig(null);
-      if (typeof window !== "undefined" && window.location.hash) {
-        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
-      }
-      if (exchange.authenticated) {
-        const nextMe = await refreshMe();
-        if (nextMe.capabilities?.some((capability) =>
-          capability === "CLIENT" || capability === "AGENT_OWNER"
-        )) {
-          router.replace("/workspace");
-        } else {
-          setRoleDialogOpen(true);
+    if (loginExchangeRef.current) return loginExchangeRef.current;
+
+    const exchangePromise = (async () => {
+      const session: CircleSession = {
+        authMethod: "GOOGLE",
+        email: "",
+        encryptionKey: result.encryptionKey,
+        refreshToken: result.refreshToken,
+        userToken: result.userToken,
+        circleUserId: result.userId ?? result.userID ?? "",
+      };
+      saveSession(session);
+      setCircleSession(session);
+      setBusy(true);
+      setError(null);
+      setAuthPhase("exchanging");
+      setStatus("Signing you in…");
+
+      try {
+        const exchange = await postJson<{
+          authenticated: boolean;
+          requires_wallet_setup: boolean;
+        }>("/api/v1/auth/circle/exchange/", {
+          user_token: session.userToken,
+          circle_user_id: session.circleUserId ?? "",
+          auth_method: session.authMethod,
+          email: session.email ?? "",
+          display_name: session.displayName ?? "",
+        });
+        saveLoginConfig(null);
+        if (typeof window !== "undefined" && window.location.hash) {
+          window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
         }
-      } else if (exchange.requires_wallet_setup) {
-        setRoleDialogOpen(true);
+
+        if (exchange.authenticated) {
+          setAuthPhase("loading-capabilities");
+          setStatus("Loading your Veyra access…");
+          const nextMe = await refreshMe();
+          if (!nextMe.authenticated) {
+            throw new Error("Veyra could not establish your application session.");
+          }
+          routeAuthenticatedUser(nextMe);
+          return;
+        }
+
+        if (exchange.requires_wallet_setup) {
+          setRoleDialogOpen(true);
+          setBusy(false);
+          setStatus(null);
+          setAuthPhase("idle");
+          loginExchangeRef.current = null;
+          return;
+        }
+
+        throw new Error("Veyra could not establish your application session.");
+      } catch (loginError) {
+        saveLoginConfig(null);
+        setBusy(false);
+        setStatus(null);
+        setAuthPhase("error");
+        setError(loginError instanceof Error ? loginError.message : "Sign-in failed.");
+        loginExchangeRef.current = null;
       }
-      setStatus(null);
-      setEmailDialogOpen(false);
-    } catch (loginError) {
-      setError(loginError instanceof Error ? loginError.message : "Sign-in failed.");
-    } finally {
-      setBusy(false);
-    }
-  }, [refreshMe, router]);
+    })();
+
+    loginExchangeRef.current = exchangePromise;
+    return exchangePromise;
+  }, [refreshMe, routeAuthenticatedUser]);
 
   callbackRef.current = processLogin;
 
@@ -374,6 +427,7 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
       if (!APP_ID) {
         setError("NEXT_PUBLIC_CIRCLE_APP_ID is missing.");
         setSdkReady(true);
+        setAuthPhase("error");
         return;
       }
       try {
@@ -384,13 +438,20 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
         if (storedConfig?.loginConfigs) config.loginConfigs = storedConfig.loginConfigs;
         const sdk = new module.W3SSdk(config, (sdkError, result) => {
           if (sdkError) {
+            saveLoginConfig(null);
+            loginExchangeRef.current = null;
             setBusy(false);
             setStatus(null);
+            setAuthPhase("error");
             setError(circleErrorMessage(sdkError));
             return;
           }
           if (!isLoginResult(result)) {
+            saveLoginConfig(null);
+            loginExchangeRef.current = null;
             setBusy(false);
+            setStatus(null);
+            setAuthPhase("error");
             setError("Circle did not return a valid login session.");
             return;
           }
@@ -401,11 +462,32 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
           setSdkReady(true);
           const storedSession = readSession();
           if (storedSession) setCircleSession(storedSession);
-          try { await refreshMe(); } catch { /* login page will handle it */ }
+          if (storedConfig) {
+            if (!loginExchangeRef.current) {
+              setBusy(true);
+              setAuthPhase("exchanging");
+              setStatus("Completing Google sign-in…");
+            }
+          } else {
+            try {
+              const nextMe = await refreshMe();
+              if (!nextMe.authenticated) {
+                setAuthPhase("idle");
+                setStatus(null);
+              }
+            } catch {
+              setStatus(null);
+              setAuthPhase("error");
+              setError("Veyra could not check your current session. Please try again.");
+            }
+          }
         }
       } catch (sdkError) {
         if (!cancelled) {
+          setBusy(false);
+          setStatus(null);
           setSdkReady(true);
+          setAuthPhase("error");
           setError(sdkError instanceof Error ? sdkError.message : "Circle SDK failed to load.");
         }
       }
@@ -416,16 +498,19 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithGoogle = useCallback(async () => {
     if (!GOOGLE_CLIENT_ID) {
+      setAuthPhase("error");
       setError("NEXT_PUBLIC_GOOGLE_CLIENT_ID is missing.");
       return;
     }
     const sdk = sdkRef.current;
     if (!sdk) {
+      setAuthPhase("error");
       setError("Circle Web SDK is still loading.");
       return;
     }
     setBusy(true);
     setError(null);
+    setAuthPhase("preparing");
     setStatus("Preparing Google sign-in…");
     try {
       let deviceId = window.localStorage.getItem(DEVICE_ID_KEY);
@@ -442,57 +527,31 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
         deviceEncryptionKey: device.deviceEncryptionKey,
         google: {
           clientId: GOOGLE_CLIENT_ID,
-          redirectUri: window.location.origin,
+          // Return to the authentication surface, never to the public landing
+          // page. With `window.location.origin` Google handed the browser back
+          // to `/`, so the marketing page rendered for a beat before this
+          // provider finished the exchange and replaced the route: the visible
+          // flash. `/login` renders a signed-in loading state instead, so no
+          // public page ever paints during the callback.
+          //
+          // This exact URI must be registered as an authorised redirect URI on
+          // the Google OAuth client, or Google returns redirect_uri_mismatch.
+          redirectUri: `${window.location.origin}/login`,
           selectAccountPrompt: true,
         },
       };
       saveLoginConfig({ loginMethod: "GOOGLE", loginConfigs });
       sdk.updateConfigs({ appSettings: { appId: APP_ID }, loginConfigs });
+      setAuthPhase("redirecting");
       setStatus("Redirecting to Google…");
       await sdk.performLogin(SocialLoginProvider.GOOGLE);
     } catch (loginError) {
+      saveLoginConfig(null);
       setBusy(false);
       setStatus(null);
+      setAuthPhase("error");
       setError(loginError instanceof Error ? loginError.message : "Google sign-in failed.");
     }
-  }, []);
-
-  const requestEmailOtp = useCallback(async (email: string) => {
-    const sdk = sdkRef.current;
-    if (!sdk) throw new Error("Circle Web SDK is still loading.");
-    setBusy(true);
-    setError(null);
-    setStatus("Requesting your email code…");
-    try {
-      let deviceId = window.localStorage.getItem(DEVICE_ID_KEY);
-      if (!deviceId) {
-        deviceId = await sdk.getDeviceId();
-        window.localStorage.setItem(DEVICE_ID_KEY, deviceId);
-      }
-      const payload = await postJson<{
-        deviceToken: string;
-        deviceEncryptionKey: string;
-        otpToken: string;
-      }>("/api/v1/auth/circle/email/request/", { device_id: deviceId, email });
-      const loginConfigs = {
-        deviceToken: payload.deviceToken,
-        deviceEncryptionKey: payload.deviceEncryptionKey,
-        otpToken: payload.otpToken,
-        email: { email },
-      };
-      saveLoginConfig({ loginMethod: "EMAIL", email, loginConfigs });
-      sdk.updateConfigs({ appSettings: { appId: APP_ID }, loginConfigs });
-      setStatus("Code sent. Continue to Circle verification.");
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  const verifyEmailOtp = useCallback(() => {
-    if (!sdkRef.current) return;
-    setBusy(true);
-    setStatus("Opening email verification…");
-    sdkRef.current.verifyOtp();
   }, []);
 
   const chooseClientRole = useCallback(async () => {
@@ -560,24 +619,25 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
     setCircleSession(null);
     setMe(null);
     setRoleDialogOpen(false);
+    loginExchangeRef.current = null;
+    redirectStartedRef.current = false;
+    setBusy(false);
+    setStatus(null);
+    setAuthPhase("idle");
     router.replace("/login");
   }, [router]);
 
   const value = useMemo<ContextValue>(() => ({
     sdkReady,
     busy,
+    authPhase,
     status,
     error,
     me,
     circleSession,
     roleDialogOpen,
-    emailDialogOpen,
     walletSetupOpen,
     loginWithGoogle,
-    requestEmailOtp,
-    verifyEmailOtp,
-    closeEmailDialog: () => setEmailDialogOpen(false),
-    openEmailDialog: () => setEmailDialogOpen(true),
     chooseClientRole,
     chooseAgentOwnerRole,
     logout,
@@ -586,8 +646,8 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
     executeTrackedChallenge,
     circleToken: circleSession?.userToken ?? null,
   }), [
-    sdkReady, busy, status, error, me, circleSession, roleDialogOpen, emailDialogOpen,
-    walletSetupOpen, loginWithGoogle, requestEmailOtp, verifyEmailOtp, chooseClientRole,
+    sdkReady, busy, authPhase, status, error, me, circleSession, roleDialogOpen,
+    walletSetupOpen, loginWithGoogle, chooseClientRole,
     chooseAgentOwnerRole, logout, refreshMe, executeChallenge, executeTrackedChallenge,
   ]);
 

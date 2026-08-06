@@ -45,7 +45,13 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 class ExternalIdentity(TimeStampedModel):
     class Provider(models.TextChoices):
-        CIRCLE = 'CIRCLE', 'Circle'
+        # Legacy rows keyed by a Circle wallet resource. A wallet is a resource,
+        # not a human, so this provider is retained only to read historic rows.
+        CIRCLE = 'CIRCLE', 'Circle (legacy wallet key)'
+        # The human authentication identity: Circle's stable SSO end-user ID
+        # returned by the Google sign-in flow and verified server-side.
+        CIRCLE_SSO_GOOGLE = 'CIRCLE_SSO_GOOGLE', 'Circle SSO (Google)'
+
 
     class Method(models.TextChoices):
         GOOGLE = 'GOOGLE', 'Google'

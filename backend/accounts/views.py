@@ -1,6 +1,9 @@
+import logging
+
 from django.conf import settings
 from drf_spectacular.utils import OpenApiTypes, extend_schema
 from django.utils import timezone
+from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -9,12 +12,67 @@ from common.models import AuditLog
 from accounts.models import ClientProfile, PendingCircleAuth, UserCapability, VeyraSession
 from accounts.serializers import AgentOwnerOnboardingSerializer, CircleExchangeSerializer, ClientOnboardingSerializer, EmailRequestSerializer, SocialDeviceSerializer
 from accounts.services import (
-    bind_identity_and_wallet_user, clear_auth_cookies, create_pending_circle_auth, get_pending_from_request,
+    CircleIdentityError, bind_google_identity_and_wallet, clear_auth_cookies, create_pending_circle_auth, get_pending_from_request,
     grant_agent_owner, grant_client, issue_session, set_onboarding_cookie, set_session_cookie,
+    resolve_google_wallet,
 )
 from wallets.circle import CircleClient, CircleError
 from wallets.models import WalletAccount
-from wallets.services import select_arc_wallet
+
+logger = logging.getLogger(__name__)
+
+
+def email_auth_disabled_response():
+    return Response(
+        {'detail': 'Email sign-in is not available. Continue with Google.', 'code': 'email_auth_disabled'},
+        status=status.HTTP_410_GONE,
+    )
+
+
+def circle_login_failure(exc, *, operation):
+    """
+    Translate a CircleError raised during a pre-authentication login step into a
+    safe, structured DRF response.
+
+    These endpoints are unauthenticated, so the response must never carry
+    Circle's raw message: it can describe our own account configuration (for
+    example a missing SMTP setup in the Circle console), which is operator
+    diagnostics rather than something a signed-out visitor should read. The
+    full detail is logged server-side instead.
+
+    Circle's own 4xx for a rejected address is surfaced as a 400 so the client
+    can correct the input. Everything else is an upstream problem and becomes a
+    502, because the previous behaviour, letting CircleError escape as an
+    unhandled RuntimeError, returned an empty HTTP 500 that told neither the
+    user nor the operator anything.
+    """
+    circle_status = getattr(exc, 'status_code', None)
+    circle_code = getattr(exc, 'code', None)
+    logger.error(
+        'Circle %s failed: status=%s code=%s message=%s',
+        operation,
+        circle_status,
+        circle_code,
+        str(exc),
+    )
+
+    if circle_status == 400:
+        return Response(
+            {
+                'detail': 'That email address was rejected. Please check it and try again.',
+                'code': 'circle_rejected_email',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return Response(
+        {
+            'detail': 'The verification service is temporarily unavailable. Please try again shortly, or continue with Google.',
+            'code': 'circle_unavailable',
+        },
+        status=status.HTTP_502_BAD_GATEWAY,
+    )
+
 
 class CircleSocialDeviceView(APIView):
     permission_classes = [AllowAny]
@@ -24,7 +82,11 @@ class CircleSocialDeviceView(APIView):
     def post(self, request):
         serializer = SocialDeviceSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        return Response(CircleClient().create_social_device_token(serializer.validated_data['device_id']))
+        try:
+            payload = CircleClient().create_social_device_token(serializer.validated_data['device_id'])
+        except CircleError as exc:
+            return circle_login_failure(exc, operation='social device token')
+        return Response(payload)
 
 class CircleEmailRequestView(APIView):
     permission_classes = [AllowAny]
@@ -32,10 +94,27 @@ class CircleEmailRequestView(APIView):
 
     @extend_schema(request=EmailRequestSerializer, responses=OpenApiTypes.OBJECT)
     def post(self, request):
+        if not settings.VEYRA_EMAIL_AUTH_ENABLED:
+            return email_auth_disabled_response()
         serializer = EmailRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        return Response(CircleClient().create_email_token(data['device_id'], data['email']))
+        try:
+            payload = CircleClient().create_email_token(data['device_id'], data['email'])
+        except CircleError as exc:
+            return circle_login_failure(exc, operation='email token')
+        return Response(payload)
+
+
+class CircleEmailDisabledView(APIView):
+    """Compatibility tombstone for retired email verify/resend endpoints."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
+    def post(self, request):
+        return email_auth_disabled_response()
 
 class CircleExchangeView(APIView):
     permission_classes = [AllowAny]
@@ -46,23 +125,29 @@ class CircleExchangeView(APIView):
         serializer = CircleExchangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        if data['auth_method'] != 'GOOGLE':
+            return email_auth_disabled_response()
         circle = CircleClient()
         try:
             wallets = circle.list_wallets(data['user_token'])
         except CircleError as exc:
             raise AuthenticationFailed('Circle session could not be validated.') from exc
 
-        arc_wallet = select_arc_wallet(wallets)
+        try:
+            circle_sso_user_id, arc_wallet = resolve_google_wallet(wallets)
+        except CircleIdentityError as exc:
+            return Response({'detail': str(exc), 'code': exc.code}, status=exc.status_code)
         if arc_wallet:
             try:
-                user, wallet = bind_identity_and_wallet_user(
+                user, wallet = bind_google_identity_and_wallet(
                     wallet=arc_wallet,
+                    circle_sso_user_id=circle_sso_user_id,
                     pending=None,
-                    circle_user_id=data.get('circle_user_id', ''),
-                    method=data['auth_method'],
                     email=data.get('email', ''),
                     display_name=data.get('display_name', ''),
                 )
+            except CircleIdentityError as exc:
+                return Response({'detail': str(exc), 'code': exc.code}, status=exc.status_code)
             except ValueError as exc:
                 raise ValidationError(str(exc)) from exc
             raw, _ = issue_session(user, request)

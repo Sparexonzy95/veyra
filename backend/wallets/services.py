@@ -3,7 +3,6 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
-from accounts.services import bind_identity_and_wallet_user
 from common.utils import digest_token
 from wallets.models import WalletAccount
 

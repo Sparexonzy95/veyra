@@ -76,6 +76,22 @@ class CircleClient:
         data = self._request('GET', '/v1/w3s/wallets', user_token=user_token)
         return data.get('wallets', []) if isinstance(data, dict) else []
 
+    def get_wallet(self, wallet_id):
+        """Read one wallet resource with developer (API key) authority.
+
+        The response carries `userId`: the Circle end user that owns the wallet.
+        Reading it here, rather than trusting the browser-supplied SDK `userId`,
+        is what makes the human identity server-verified.
+        """
+        data = self._request('GET', f'/v1/w3s/wallets/{wallet_id}')
+        return data.get('wallet', data) if isinstance(data, dict) else {}
+
+    def get_user(self, circle_user_id):
+        """Read one Circle end user, including its immutable `authMode`."""
+        data = self._request('GET', f'/v1/w3s/users/{circle_user_id}')
+        return data.get('user', data) if isinstance(data, dict) else {}
+
+
     def initialize_user_wallet(self, user_token):
         return self._request('POST', '/v1/w3s/user/initialize', user_token=user_token, json={
             'idempotencyKey': str(uuid.uuid4()),
@@ -89,6 +105,11 @@ class CircleClient:
             f'/v1/w3s/wallets/{wallet_id}/balances',
             user_token=user_token,
         )
+        return data.get('tokenBalances', data.get('balances', [])) if isinstance(data, dict) else []
+
+    def wallet_balances_for_wallet(self, wallet_id):
+        """Read balances with developer authority for reconciliation checks."""
+        data = self._request('GET', f'/v1/w3s/wallets/{wallet_id}/balances')
         return data.get('tokenBalances', data.get('balances', [])) if isinstance(data, dict) else []
 
     def create_contract_execution(self, user_token, payload):

@@ -25,8 +25,14 @@ class WalletProvisioningTests(TestCase):
         self.client.cookies[settings.VEYRA_ONBOARDING_COOKIE] = raw
         self.client.credentials(HTTP_ORIGIN='http://localhost:3000')
 
+    @patch('wallets.circle.CircleClient.get_user', return_value={'authMode': 'SSO'})
+    @patch('wallets.circle.CircleClient.get_wallet', return_value={
+        'id': 'wallet-1',
+        'address': '0x1111111111111111111111111111111111111111',
+        'userId': 'circle-user-1',
+    })
     @patch('wallets.views.CircleClient.list_wallets')
-    def test_sync_binds_wallet_and_creates_client(self, list_wallets):
+    def test_sync_binds_wallet_and_creates_client(self, list_wallets, *_mocks):
         list_wallets.return_value = [{
             'id': 'wallet-1',
             'walletSetId': 'set-1',

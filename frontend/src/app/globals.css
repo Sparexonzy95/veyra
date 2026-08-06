@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700&display=swap");
+﻿@import url("https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 @tailwind base;
@@ -942,6 +942,494 @@ html {
   /* The accordion still opens and closes, it simply does so instantly. */
   .veyra-faq-panel {
     transition: none !important;
+  }
+}
+
+
+/* ==========================================================================
+   Veyra authentication surface (/login)
+   --------------------------------------------------------------------------
+   Near-monochrome by intent. The canvas, card and controls are ink/charcoal;
+   sand appears only as a small accent (the mark halo, tile icons, input focus
+   and the ready-state border on the email button). Nothing here is shared
+   with the landing page.
+   ========================================================================== */
+
+.veyra-auth {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100svh;
+  width: 100%;
+  overflow-x: hidden;
+  background: #050505;
+  isolation: isolate;
+}
+
+/* One faint neutral pool behind the card. Kept under 6% alpha so the page
+   reads as black rather than brown, and static: motion here competes with
+   the form for attention. */
+.veyra-auth-field {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle at 50% 46%,
+      rgba(196, 173, 141, 0.055),
+      transparent 32%
+    ),
+    #050505;
+}
+
+.veyra-auth-brand {
+  position: absolute;
+  top: 28px;
+  left: 32px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 8px;
+  opacity: 0.92;
+  transition: opacity 160ms ease;
+}
+
+.veyra-auth-brand:hover {
+  opacity: 1;
+}
+
+.veyra-auth-brand:focus-visible {
+  outline: 2px solid rgba(196, 173, 141, 0.6);
+  outline-offset: 6px;
+}
+
+/* Not strictly centred: `justify-content: center` with auto margins would
+   clip the card on short landscape viewports, so padding + safe minimum
+   space lets the page scroll instead. */
+.veyra-auth-center {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-height: 100vh;
+  min-height: 100svh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 104px 20px 48px;
+}
+
+.veyra-auth-card {
+  width: min(460px, calc(100% - 40px));
+  padding: 40px;
+  border-radius: 23px;
+  background: rgba(17, 17, 16, 0.96);
+  border: 1px solid rgba(245, 237, 226, 0.11);
+  box-shadow:
+    0 28px 70px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 249, 241, 0.025);
+  text-align: center;
+}
+
+.veyra-auth-mark-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.veyra-auth-mark {
+  position: relative;
+  z-index: 1;
+  width: 62px;
+  height: auto;
+}
+
+/* Barely-there halo. At 8% it separates the mark from the card without
+   reading as a lit brown disc. */
+.veyra-auth-mark-halo {
+  position: absolute;
+  width: 108px;
+  height: 108px;
+  border-radius: 999px;
+  background: radial-gradient(
+    circle,
+    rgba(196, 173, 141, 0.08),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+.veyra-auth-title {
+  margin: 0;
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--veyra-cream);
+}
+
+.veyra-auth-lede {
+  margin: 12px auto 0;
+  max-width: 360px;
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--veyra-muted);
+}
+
+.veyra-auth-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 26px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Informational, so no hover, no cursor, no tab stop. */
+.veyra-auth-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 13px 8px;
+  min-height: 74px;
+  border-radius: 12px;
+  background: #0c0c0b;
+  border: 1px solid rgba(245, 237, 226, 0.1);
+}
+
+.veyra-auth-tile-icon {
+  width: 18px;
+  height: 18px;
+  color: rgba(196, 173, 141, 0.72);
+}
+
+.veyra-auth-tile-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--veyra-muted);
+  text-align: center;
+}
+
+.veyra-auth-body {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.veyra-auth-google,
+.veyra-auth-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 50px;
+  padding: 0 18px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease;
+}
+
+/* Deliberately the brightest surface in the card: it is the primary path. */
+.veyra-auth-google {
+  background: var(--veyra-cream);
+  border: 1px solid var(--veyra-cream);
+  color: var(--veyra-ink);
+}
+
+.veyra-auth-google:hover:not(:disabled) {
+  background: #fffdfa;
+}
+
+/* Neutral dark secondary so it never competes with Google. The sand here is
+   a 1px border at low alpha, not a fill. */
+.veyra-auth-primary {
+  background: #171715;
+  border: 1px solid rgba(245, 237, 226, 0.14);
+  color: var(--veyra-cream);
+}
+
+.veyra-auth-primary:hover:not(:disabled) {
+  background: #1e1e1b;
+  border-color: rgba(196, 173, 141, 0.42);
+}
+
+.veyra-auth-google:focus-visible,
+.veyra-auth-primary:focus-visible,
+.veyra-auth-secondary:focus-visible,
+.veyra-auth-back:focus-visible {
+  outline: 2px solid rgba(196, 173, 141, 0.7);
+  outline-offset: 3px;
+}
+
+.veyra-auth-google:disabled,
+.veyra-auth-primary:disabled,
+.veyra-auth-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.veyra-auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.veyra-auth-divider-line {
+  flex: 1;
+  height: 1px;
+  background: rgba(245, 237, 226, 0.09);
+}
+
+.veyra-auth-divider-text {
+  font-size: 12.5px;
+  color: rgba(245, 237, 226, 0.38);
+  white-space: nowrap;
+}
+
+.veyra-auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
+.veyra-auth-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--veyra-cream);
+}
+
+.veyra-auth-input {
+  width: 100%;
+  min-height: 50px;
+  padding: 0 15px;
+  border-radius: 12px;
+  background: #080808;
+  border: 1px solid rgba(245, 237, 226, 0.15);
+  color: var(--veyra-cream);
+  font-size: 15px;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.veyra-auth-input::placeholder {
+  color: rgba(245, 237, 226, 0.3);
+}
+
+/* The one place sand is allowed to be assertive, because focus needs to be
+   unmistakable for keyboard users. */
+.veyra-auth-input:focus {
+  outline: none;
+  border-color: rgba(196, 173, 141, 0.72);
+  box-shadow: 0 0 0 3px rgba(196, 173, 141, 0.1);
+}
+
+.veyra-auth-input:disabled {
+  opacity: 0.55;
+}
+
+.veyra-auth-form .veyra-auth-primary {
+  margin-top: 6px;
+}
+
+.veyra-auth-step {
+  animation: veyra-auth-step-in 260ms ease both;
+}
+
+@keyframes veyra-auth-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.veyra-auth-step-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--veyra-cream);
+}
+
+.veyra-auth-step-lede {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--veyra-muted);
+}
+
+.veyra-auth-step-lede strong {
+  color: var(--veyra-cream);
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.veyra-auth-secondary-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.veyra-auth-secondary {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--veyra-muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+
+.veyra-auth-secondary:hover:not(:disabled) {
+  color: var(--veyra-cream);
+  border-color: rgba(245, 237, 226, 0.14);
+}
+
+.veyra-auth-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--veyra-muted);
+}
+
+/* Warm-dark rather than a bright red panel, so a recoverable error does not
+   dominate the card. */
+.veyra-auth-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 16px 0 0;
+  padding: 11px 13px;
+  border-radius: 11px;
+  background: rgba(120, 46, 38, 0.16);
+  border: 1px solid rgba(198, 92, 76, 0.34);
+  color: #f0c9c0;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.veyra-auth-error svg {
+  color: #d98a78;
+}
+
+.veyra-auth-helper {
+  margin: 18px auto 0;
+  max-width: 330px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: rgba(245, 237, 226, 0.34);
+}
+
+.veyra-auth-back {
+  font-size: 13.5px;
+  color: rgba(245, 237, 226, 0.42);
+  border-radius: 6px;
+  transition: color 160ms ease;
+}
+
+.veyra-auth-back:hover {
+  color: var(--veyra-cream);
+}
+
+.veyra-auth-enter {
+  animation: veyra-auth-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes veyra-auth-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .veyra-auth-brand {
+    top: 20px;
+    left: 20px;
+  }
+
+  .veyra-auth-center {
+    padding: 84px 16px 40px;
+    gap: 18px;
+  }
+
+  .veyra-auth-card {
+    width: 100%;
+    padding: 28px 20px;
+    border-radius: 20px;
+  }
+
+  .veyra-auth-mark {
+    width: 54px;
+  }
+
+  .veyra-auth-mark-halo {
+    width: 92px;
+    height: 92px;
+  }
+
+  .veyra-auth-title {
+    font-size: 31px;
+  }
+
+  .veyra-auth-lede {
+    font-size: 15px;
+  }
+
+  .veyra-auth-tiles {
+    gap: 8px;
+  }
+
+  .veyra-auth-tile {
+    padding: 11px 6px;
+    min-height: 68px;
+  }
+
+  .veyra-auth-tile-label {
+    font-size: 11.5px;
+  }
+}
+
+/* Short landscape phones: stop centring and let the card scroll. */
+@media (max-height: 640px) {
+  .veyra-auth-center {
+    justify-content: flex-start;
+    padding-top: 76px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .veyra-auth-enter,
+  .veyra-auth-step {
+    animation: none;
   }
 }
 

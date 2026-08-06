@@ -5,7 +5,7 @@ from rest_framework.exceptions import AuthenticationFailed, NotFound, Validation
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from accounts.services import bind_identity_and_wallet_user, get_pending_from_request, issue_session, set_session_cookie
+from accounts.services import CircleIdentityError, bind_google_identity_and_wallet, get_pending_from_request, issue_session, resolve_google_wallet, set_session_cookie
 from common.models import AuditLog
 from common.permissions import HasClientCapability
 from wallets.circle import CircleClient, CircleError
@@ -53,7 +53,8 @@ class WalletSyncView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         user_token = extract_circle_user_token(request)
-        circle_wallet = select_arc_wallet(CircleClient().list_wallets(user_token))
+        circle_wallets = CircleClient().list_wallets(user_token)
+        circle_wallet = select_arc_wallet(circle_wallets)
         if not circle_wallet:
             raise NotFound('Arc wallet is not available yet. Complete the Circle challenge and retry.')
 
@@ -65,14 +66,16 @@ class WalletSyncView(APIView):
             pending = get_pending_from_request(request, user_token=user_token)
             ensure_pending_token_matches(pending, user_token)
             try:
-                user, wallet = bind_identity_and_wallet_user(
+                circle_sso_user_id, circle_wallet = resolve_google_wallet(circle_wallets)
+                user, wallet = bind_google_identity_and_wallet(
                     wallet=circle_wallet,
+                    circle_sso_user_id=circle_sso_user_id,
                     pending=pending,
-                    circle_user_id=data.get('circle_user_id', ''),
-                    method=data.get('auth_method', 'GOOGLE'),
                     email=data.get('email', ''),
                     display_name=data.get('display_name', ''),
                 )
+            except CircleIdentityError as exc:
+                return Response({'detail': str(exc), 'code': exc.code}, status=exc.status_code)
             except ValueError as exc:
                 raise ValidationError(str(exc)) from exc
 

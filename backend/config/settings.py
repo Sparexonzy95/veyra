@@ -114,7 +114,28 @@ VEYRA_SESSION_TTL_SECONDS = env.int('VEYRA_SESSION_TTL_SECONDS', default=60 * 60
 VEYRA_ONBOARDING_TTL_SECONDS = env.int('VEYRA_ONBOARDING_TTL_SECONDS', default=60 * 30)
 VEYRA_COOKIE_SAMESITE = env('VEYRA_COOKIE_SAMESITE', default='Lax')
 
+# Veyra is Google-only. Circle authentication modes are immutable per end user,
+# so an EMAIL Circle user is a different human identity with a different wallet
+# than the same person's Google SSO user. Allowing both providers silently
+# created a second account and a second wallet. The email endpoints stay in the
+# codebase behind this flag so the code path can be re-enabled deliberately,
+# but they must never create a Veyra user, profile, session, or wallet while it
+# is off.
+VEYRA_EMAIL_AUTH_ENABLED = env.bool('VEYRA_EMAIL_AUTH_ENABLED', default=False)
+
+# Destructive local-account reconciliation is intentionally tied to the known
+# off-repository backup and to an explicit operator assertion made only after
+# this checkout's automated validation has passed.
+VEYRA_RECONCILIATION_BACKUP_PATH = env(
+    'VEYRA_RECONCILIATION_BACKUP_PATH',
+    default=r'C:\Users\cashkink\veyra-backups\veyra-before-account-reconciliation-20260805-174948.dump',
+)
+VEYRA_RECONCILIATION_TESTS_PASSED = env.bool(
+    'VEYRA_RECONCILIATION_TESTS_PASSED', default=False,
+)
+
 CIRCLE_BASE_URL = env('CIRCLE_BASE_URL', default='https://api.circle.com')
+
 CIRCLE_API_KEY = env('CIRCLE_API_KEY', default='')
 CIRCLE_ENTITY_SECRET = env('CIRCLE_ENTITY_SECRET', default='')
 CIRCLE_APP_ID = env('CIRCLE_APP_ID', default='')
