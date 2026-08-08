@@ -1,0 +1,27 @@
+{
+  "name": "@veyra/custom-escrow-contracts",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Veyra autonomous work escrow and Karma contract for Arc",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "clean": "hardhat clean",
+    "deploy:arc": "hardhat run scripts/deploy.cjs --network arcTestnet",
+    "check:deployment": "hardhat run scripts/check-deployment.cjs --network arcTestnet",
+    "authorise:agent": "hardhat run scripts/authorise-agent.cjs --network arcTestnet",
+    "authorise:verifier": "hardhat run scripts/authorise-verifier.cjs --network arcTestnet",
+    "accept:ownership": "hardhat run scripts/accept-ownership.cjs --network arcTestnet"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "2.0.8",
+    "@nomicfoundation/hardhat-ethers": "3.0.8",
+    "chai": "4.5.0",
+    "ethers": "6.13.4",
+    "hardhat": "2.28.6",
+    "solc": "0.8.24"
+  }
+}

@@ -124,9 +124,6 @@ def _required_commands(assignment: WorkerJobAssignment) -> list[str]:
     commands = [str(item).strip() for item in values if isinstance(item, str) and item.strip()]
     if commands:
         return commands[:4]
-    skills = {str(value).casefold() for value in assignment.worker.skills}
-    if "python" in skills or "pytest" in skills:
-        return ["python -m pytest -q"]
     return []
 
 

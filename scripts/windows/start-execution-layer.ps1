@@ -17,7 +17,7 @@ while ($true) {
     # Django intentionally emits structured logs on stderr, so those records
     # must not terminate the watchdog; the native exit code remains authoritative.
     $ErrorActionPreference = "Continue"
-    & $python manage.py run_execution_layer --interval 5 --max-interval 120 2>&1 |
+    & $python manage.py run_execution_layer --interval 2 --max-interval 120 2>&1 |
         Tee-Object -FilePath $logPath -Append
     $exitCode = $LASTEXITCODE
     $ErrorActionPreference = "Stop"

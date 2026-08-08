@@ -88,6 +88,72 @@ class ModelPathPolicyRepairTests(unittest.TestCase):
         self.assertFalse((self.workspace / "pp.py").exists())
         self.assertEqual((self.workspace / "app.py").read_text(encoding="utf-8"), "OLD\n")
 
+    def test_pytest_command_uses_the_lease_python_environment(self):
+        lease_python = self.workspace / "lease-python"
+
+        self.assertEqual(
+            self.server._command_args(
+                "pytest -q",
+                python_executable=lease_python,
+            ),
+            [str(lease_python), "-m", "pytest", "-q"],
+        )
+
+    def test_declared_requirements_are_installed_in_lease_environment(self):
+        (self.workspace / "requirements.txt").write_text(
+            "Flask==3.0.3\npytest==8.3.2\n",
+            encoding="utf-8",
+        )
+        environment = self.workspace.parent / "lease-environment"
+        lease_python = Path(sys.executable)
+        completed = subprocess.CompletedProcess([], 0, "installed", "")
+
+        with (
+            patch.object(self.server, "_remove_workspace", return_value=True),
+            patch.object(self.server, "_python_environment_executable", return_value=lease_python),
+            patch.object(self.server, "_run_process", return_value=completed) as run,
+        ):
+            selected, output, command = self.server._prepare_validation_environment(
+                self._task(),
+                self.workspace,
+                environment,
+            )
+
+        self.assertEqual(selected, lease_python)
+        self.assertEqual(output, "installed")
+        self.assertEqual(command, "python -m pip install -r requirements.txt")
+        self.assertEqual(run.call_count, 2)
+        install_args = run.call_args_list[1].args[0]
+        self.assertEqual(install_args[-2:], ["-r", "requirements.txt"])
+        self.assertNotIn(str(self.workspace / "requirements.txt"), install_args)
+
+    def test_dependency_setup_failure_is_a_preflight_error(self):
+        (self.workspace / "requirements.txt").write_text(
+            "Flask==3.0.3\n",
+            encoding="utf-8",
+        )
+        environment = self.workspace.parent / "lease-environment"
+        lease_python = Path(sys.executable)
+        completed = [
+            subprocess.CompletedProcess([], 0, "", ""),
+            subprocess.CompletedProcess([], 1, "", "network timed out"),
+        ]
+
+        with (
+            patch.object(self.server, "_remove_workspace", return_value=True),
+            patch.object(self.server, "_python_environment_executable", return_value=lease_python),
+            patch.object(self.server, "_run_process", side_effect=completed),
+        ):
+            with self.assertRaisesRegex(
+                self.server.RuntimePreflightError,
+                "network timed out",
+            ):
+                self.server._prepare_validation_environment(
+                    self._task(),
+                    self.workspace,
+                    environment,
+                )
+
     def test_changed_files_preserves_first_character_of_modified_path(self):
         self.server._run_process(
             ["git", "init", "-q"],
@@ -178,6 +244,78 @@ class ModelPathPolicyRepairTests(unittest.TestCase):
         )
         self.assertEqual(files, [{"path": "app.py", "content": "FIXED\n"}])
         self.assertEqual(summary, "fixed")
+
+    def test_exact_funded_path_value_is_accepted_as_path_id_alias(self):
+        content = json.dumps(
+            {
+                "summary": "fixed",
+                "files": [{"path_id": "app.py", "content": "FIXED\n"}],
+            }
+        )
+        files, summary = self.server._extract_model_files(
+            content,
+            path_ids={"FILE_1": "app.py"},
+        )
+        self.assertEqual(files, [{"path": "app.py", "content": "FIXED\n"}])
+        self.assertEqual(summary, "fixed")
+
+    def test_empty_allowlist_builds_ids_from_exact_repository_paths(self):
+        paths = self.server._trusted_model_paths(
+            [],
+            ["app.py", "tests/test_app.py"],
+        )
+        self.assertEqual(paths, ["app.py", "tests/test_app.py"])
+
+    def test_wildcard_allowlist_builds_ids_only_for_matching_repository_paths(self):
+        paths = self.server._trusted_model_paths(
+            ["tests/**"],
+            ["app.py", "tests/test_app.py"],
+        )
+        self.assertEqual(paths, ["tests/test_app.py"])
+
+    def test_open_policy_accepts_exact_repository_path_alias_from_model(self):
+        task = self._task()
+        task["policy"]["allowed_paths"] = []
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "summary": "fixed",
+                                "files": [
+                                    {"path_id": "app.py", "content": "FIXED\n"}
+                                ],
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+        with patch.object(self.server.httpx, "post", return_value=response):
+            self.server.AI_API_KEY = "test-key"
+            files, summary = self.server._run_job_model(task, self.workspace)
+
+        self.assertEqual(files, [{"path": "app.py", "content": "FIXED\n"}])
+        self.assertEqual(summary, "fixed")
+
+    def test_unknown_path_id_alias_remains_rejected(self):
+        content = json.dumps(
+            {
+                "summary": "bad",
+                "files": [{"path_id": "pp.py", "content": "WRONG\n"}],
+            }
+        )
+        with self.assertRaisesRegex(
+            self.server.ModelOutputPolicyError,
+            r"unknown funded path ID: pp\.py",
+        ):
+            self.server._extract_model_files(
+                content,
+                path_ids={"FILE_1": "app.py"},
+            )
 
     def test_trusted_path_id_rejects_conflicting_model_path(self):
         content = json.dumps(

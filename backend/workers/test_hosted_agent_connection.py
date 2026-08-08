@@ -356,6 +356,12 @@ class HostedAgentConnectionTests(TestCase):
                 "provider_ready": True,
                 "runtime_version": "test-runtime/1.1",
                 "model": "zai-org/glm-5.2",
+                "job_assignment_id": "assignment-123",
+                "job_onchain_id": "14",
+                "job_status": "running",
+                "job_phase": "BASELINE_VALIDATION",
+                "job_message": "Running the funded baseline validation before code changes.",
+                "job_updated_at": "2026-08-07T17:00:00Z",
             },
             format="json",
             HTTP_AUTHORIZATION=f"Bearer {raw_credential}",
@@ -367,6 +373,14 @@ class HostedAgentConnectionTests(TestCase):
         self.assertTrue(self.worker.engine_connected)
         self.assertEqual(self.worker.engine_version, "test-runtime/1.1")
         self.assertEqual(self.worker.engine_model, "zai-org/glm-5.2")
+        self.assertEqual(
+            connection.metadata["runtime_progress"]["job"]["assignment_id"],
+            "assignment-123",
+        )
+        self.assertEqual(
+            connection.metadata["runtime_progress"]["job"]["phase"],
+            "BASELINE_VALIDATION",
+        )
 
         configuration = api.get(
             "/api/v1/agent-runtime/configuration/",

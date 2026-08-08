@@ -1,21 +1,13 @@
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/dashboard/status-badge";
 import type { AgentStatus } from "@/types/veyra";
 
-const attentionStatuses: AgentStatus[] = [
-  "RUNTIME_VERIFICATION_FAILED",
-  "WALLET_CREATION_FAILED",
-  "CONTRACT_AUTHORISATION_FAILED",
-  "PROVIDER_UNAVAILABLE",
-  "CONNECTION_FAILED",
-  "SUSPENDED",
-];
-
+/**
+ * Agent statuses share the dashboard status badge with jobs.
+ *
+ * The several distinct failure statuses all collapse to one "Needs attention"
+ * label in the shared map: an owner only needs to know the agent is not
+ * working, and the agent detail page explains why.
+ */
 export function AgentStatusBadge({ status }: { status: AgentStatus }) {
-  if (status === "ACTIVE") {
-    return <Badge variant="success">Active</Badge>;
-  }
-  if (attentionStatuses.includes(status)) {
-    return <Badge variant="destructive">Needs attention</Badge>;
-  }
-  return <Badge variant="secondary">Offline</Badge>;
+  return <StatusBadge status={status} />;
 }

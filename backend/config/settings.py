@@ -84,7 +84,7 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'EXCEPTION_HANDLER': 'common.exceptions.api_exception_handler',
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'DEFAULT_PAGINATION_CLASS': 'common.pagination.VeyraPageNumberPagination',
     'PAGE_SIZE': 20,
 }
 SPECTACULAR_SETTINGS = {
@@ -126,9 +126,12 @@ VEYRA_EMAIL_AUTH_ENABLED = env.bool('VEYRA_EMAIL_AUTH_ENABLED', default=False)
 # Destructive local-account reconciliation is intentionally tied to the known
 # off-repository backup and to an explicit operator assertion made only after
 # this checkout's automated validation has passed.
+# The backup lives outside the repository and is machine-specific, so there is
+# no safe default. Unset means "no verified backup", which blocks the apply
+# path rather than allowing it.
 VEYRA_RECONCILIATION_BACKUP_PATH = env(
     'VEYRA_RECONCILIATION_BACKUP_PATH',
-    default=r'C:\Users\cashkink\veyra-backups\veyra-before-account-reconciliation-20260805-174948.dump',
+    default='',
 )
 VEYRA_RECONCILIATION_TESTS_PASSED = env.bool(
     'VEYRA_RECONCILIATION_TESTS_PASSED', default=False,
@@ -211,12 +214,15 @@ VEYRA_JOB_MAX_RUNTIME_ATTEMPTS = env.int(
     'VEYRA_JOB_MAX_RUNTIME_ATTEMPTS',
     default=4,
 )
-VEYRA_REQUIRE_GITHUB_CHECKS = env.bool('VEYRA_REQUIRE_GITHUB_CHECKS', default=True)
+# Repositories are not required to install GitHub Actions. Exact PR/SHA
+# verification and the independent signed verifier remain mandatory. Deployments
+# or individual funded policies may opt in to requiring a GitHub Check Run.
+VEYRA_REQUIRE_GITHUB_CHECKS = env.bool('VEYRA_REQUIRE_GITHUB_CHECKS', default=False)
 VEYRA_VERIFIER_RESERVATION_SECONDS = env.int('VEYRA_VERIFIER_RESERVATION_SECONDS', default=90)
 VEYRA_VERIFIER_LEASE_MINUTES = env.int('VEYRA_VERIFIER_LEASE_MINUTES', default=30)
 VEYRA_SETTLEMENT_TIMEOUT_SECONDS = env.int('VEYRA_SETTLEMENT_TIMEOUT_SECONDS', default=180)
 VEYRA_SETTLEMENT_POLL_INTERVAL_SECONDS = env.int(
-    'VEYRA_SETTLEMENT_POLL_INTERVAL_SECONDS', default=3
+    'VEYRA_SETTLEMENT_POLL_INTERVAL_SECONDS', default=2
 )
 
 WORKER_CIRCLE_WALLET_SET_NAME = env(
@@ -240,7 +246,7 @@ WORKER_DISCOVERY_REQUIRE_SKILL_MATCH = env.bool(
 WORKER_CLAIM_FEE_LEVEL = env('WORKER_CLAIM_FEE_LEVEL', default='MEDIUM')
 WORKER_CLAIM_TIMEOUT_SECONDS = env.int('WORKER_CLAIM_TIMEOUT_SECONDS', default=180)
 WORKER_CLAIM_POLL_INTERVAL_SECONDS = env.int(
-    'WORKER_CLAIM_POLL_INTERVAL_SECONDS', default=3
+    'WORKER_CLAIM_POLL_INTERVAL_SECONDS', default=2
 )
 WORKER_ARC_RECEIPT_TIMEOUT_SECONDS = env.int(
     'WORKER_ARC_RECEIPT_TIMEOUT_SECONDS', default=120
@@ -259,7 +265,7 @@ WORKER_SUBMISSION_TIMEOUT_SECONDS = env.int(
     'WORKER_SUBMISSION_TIMEOUT_SECONDS', default=180
 )
 WORKER_SUBMISSION_POLL_INTERVAL_SECONDS = env.int(
-    'WORKER_SUBMISSION_POLL_INTERVAL_SECONDS', default=3
+    'WORKER_SUBMISSION_POLL_INTERVAL_SECONDS', default=2
 )
 
 VEYRA_RUNNER_PAIRING_TTL_SECONDS = env.int(
@@ -281,5 +287,11 @@ LOGGING = {
     'formatters': {'jsonish': {'format': '%(asctime)s %(levelname)s request_id=%(request_id)s %(name)s %(message)s'}},
     'filters': {'request_id': {'()': 'common.logging.RequestIdFilter'}},
     'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'jsonish', 'filters': ['request_id']}},
+    # httpx's INFO request line includes the complete URL. Circle resource URLs
+    # contain stable user and wallet IDs, so retain transport warnings/errors
+    # without writing those identifiers to routine application logs.
+    'loggers': {
+        'httpx': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+    },
     'root': {'handlers': ['console'], 'level': env('LOG_LEVEL', default='INFO')},
 }

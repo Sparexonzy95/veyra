@@ -147,6 +147,29 @@ export type GitHubIssuePreview = {
   };
 };
 
+export type GitHubCiPreflight = {
+  repository_id: string;
+  repository: string;
+  branch: string;
+  ready: boolean;
+  checks_permission: boolean;
+  workflow_files: string[];
+  automatic_workflows: string[];
+  recent_check_runs: Array<{
+    name: string;
+    status: string;
+    conclusion: string;
+    app: string;
+  }>;
+  source:
+    | "AUTOMATIC_WORKFLOW"
+    | "EXISTING_CHECK_PROVIDER"
+    | "WORKFLOW_NOT_AUTOMATIC"
+    | "NO_CI_EVIDENCE"
+    | "MISSING_CHECKS_PERMISSION";
+  message: string;
+};
+
 export type JobAdvancedOptions = {
   job_title?: string;
   job_type?: string;
@@ -159,6 +182,7 @@ export type JobAdvancedOptions = {
   forbidden_paths?: string[];
   required_commands?: string[];
   delivery_type?: "PULL_REQUEST" | "COMMIT";
+  require_github_checks?: boolean;
 };
 
 export type JobDraft = {
@@ -201,6 +225,15 @@ export type JobSummary = {
 };
 
 
+export type RuntimeProgress = {
+  assignment_id: string;
+  job_id?: string;
+  status: string;
+  phase: string;
+  message: string;
+  updated_at: string;
+};
+
 export type ExecutionAssignment = {
   id: string;
   job_id: number;
@@ -224,6 +257,7 @@ export type ExecutionAssignment = {
     provider_ready: boolean;
     last_seen_at: string | null;
     health_message: string;
+    progress: RuntimeProgress | null;
   };
   runtime_last_seen_at: string | null;
   attention_required: boolean;
@@ -271,11 +305,13 @@ export type ExecutionAssignment = {
     evidence_hash: string;
     summary: string;
     failure_message: string;
+    progress: RuntimeProgress | null;
   } | null;
   settlement_transaction_hash: string;
   settlement_confirmed_at: string | null;
   failure_stage: string;
   failure_message: string;
+  retryable: boolean;
   failure_history: Array<{
     source: string;
     stage: string;
@@ -338,6 +374,11 @@ export type JobDetail = JobSummary & {
   evidence_hash: string;
   onchain: Record<string, unknown> | null;
   execution: JobExecution;
+  verification_requirements: {
+    veyra_independent_verification: boolean;
+    funded_validation: boolean;
+    github_ci_required: boolean;
+  };
   available_action: {
     code: "CANCEL_JOB" | "CLAIM_REFUND";
     contract_function: string;

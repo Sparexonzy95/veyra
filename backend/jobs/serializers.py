@@ -38,6 +38,18 @@ class JobDraftSerializer(serializers.ModelSerializer):
             'installation_status': access.installation.status,
         }
 
+    def validate_advanced_options(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('Advanced options must be an object.')
+        if (
+            'require_github_checks' in value
+            and not isinstance(value.get('require_github_checks'), bool)
+        ):
+            raise serializers.ValidationError(
+                'require_github_checks must be true or false.'
+            )
+        return value
+
     def validate_acceptance_criteria(self, value):
         if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
             raise serializers.ValidationError('Acceptance criteria must be a list of clear statements.')

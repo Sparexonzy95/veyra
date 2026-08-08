@@ -1,30 +1,40 @@
 "use client";
 
 import { CreateJobDialog } from "@/components/jobs/create-job-dialog";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, BriefcaseBusiness } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
 
+/**
+ * Create Job as a normal dashboard page.
+ *
+ * The builder used to open as a dialog over an otherwise empty page, which
+ * meant a close X, an overlay, and a viewport-height scroll area on a route
+ * the user navigated to deliberately. Here it renders inline: `open` is a
+ * constant because there is nothing to open or dismiss, and `onOpenChange`
+ * only fires when the builder finishes and wants to leave.
+ */
 export default function CreateJobPage() {
   const router = useRouter();
-  const [open, setOpen] = useState(true);
 
   return (
-    <div className="space-y-6">
-      <Button variant="ghost" asChild className="px-0"><Link href="/client/jobs"><ArrowLeft className="h-4 w-4" /> Back to Jobs</Link></Button>
-      <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Client workspace</p><h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Create Job</h1><p className="mt-1.5 text-sm text-muted-foreground">Turn an approved GitHub issue into protected, funded work.</p></div>
-      <Card><CardContent className="flex flex-col items-center py-14 text-center"><BriefcaseBusiness className="mb-3 h-9 w-9 text-primary" /><h2 className="text-lg font-semibold">Job builder</h2><p className="mt-2 max-w-lg text-sm text-muted-foreground">Review repository access, acceptance criteria, budget and verification before Circle asks you to approve funding.</p><Button className="mt-6" onClick={() => setOpen(true)}>Open job builder</Button></CardContent></Card>
+    <>
+      <Link
+        href="/client/jobs"
+        className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Back to Jobs
+      </Link>
+
       <CreateJobDialog
-        open={open}
+        asPage
+        open
         onOpenChange={(next) => {
-          setOpen(next);
           if (!next) router.push("/client/jobs");
         }}
         onComplete={() => router.push("/client/jobs")}
       />
-    </div>
+    </>
   );
 }

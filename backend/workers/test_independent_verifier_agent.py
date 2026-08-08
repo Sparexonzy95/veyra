@@ -5,7 +5,7 @@ import hashlib
 import json
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 
@@ -26,6 +26,7 @@ from jobs.models import (
 from workers.execution_verification import (
     ExecutionVerificationPending,
     _verification_report,
+    verify_and_settle_assignment,
 )
 from workers.github_app_execution import PullRequestSnapshot
 from workers.hosted_agent_connection import (
@@ -484,6 +485,24 @@ class IndependentVerifierAgentTests(TestCase):
         self.assertEqual(self.assignment.verification_status, "VERIFIER_APPROVED")
         self.assertFalse(self.assignment.verification_report_hash)
 
+    @patch("workers.execution_verification.ArcClient")
+    def test_completed_settlement_is_idempotent_without_another_arc_call(self, arc_client):
+        self.assignment.status = WorkerJobAssignment.Status.COMPLETED
+        self.assignment.verification_status = "APPROVED"
+        self.assignment.verification_report_hash = "0x" + "12" * 32
+        self.assignment.verification_evidence_hash = "0x" + "34" * 32
+        self.assignment.verification_reason_hash = "0x" + "00" * 32
+        self.assignment.settlement_transaction_hash = "0x" + "56" * 32
+        self.assignment.save()
+
+        first = verify_and_settle_assignment(self.assignment)
+        second = verify_and_settle_assignment(self.assignment)
+
+        self.assertEqual(first, second)
+        self.assertEqual(first.status, WorkerJobAssignment.Status.COMPLETED)
+        self.assertEqual(first.settlement_transaction_hash, "0x" + "56" * 32)
+        arc_client.assert_not_called()
+
     @patch("workers.execution_verification.GitHubAppExecutionClient.for_job")
     def test_ci_pass_cannot_approve_without_verifier_agent(self, github_for_job):
         github_for_job.return_value.pull_request.return_value = PullRequestSnapshot(
@@ -547,3 +566,175 @@ class IndependentVerifierAgentTests(TestCase):
             report["approval_rule"],
             "github_ci_passed AND independent_verifier_agent_approved",
         )
+
+    @patch("workers.execution_verification.GitHubAppExecutionClient.for_job")
+    def test_silent_funded_ci_policy_ignores_deployment_default_and_allows_verifier_approval(self, github_for_job):
+        github_for_job.return_value.pull_request.return_value = PullRequestSnapshot(
+            number=42,
+            html_url="https://github.com/example/flask-repo/pull/42",
+            state="open",
+            merged=False,
+            head_ref="veyra/job-44-logicbloom",
+            head_sha="c" * 40,
+            base_ref="main",
+            changed_files=("app.py", "tests/test_app.py"),
+        )
+        github_for_job.return_value.check_runs.return_value = []
+        value = reserve_verifier_for_assignment(self.assignment)
+        task = verification_task_for_connection(self.verifier_connection)
+        value.refresh_from_db()
+        submit_verifier_result(
+            connection=self.verifier_connection,
+            payload=self._signed_submission(value, task, self._approval_report()),
+        )
+        self.assignment.refresh_from_db()
+
+        report, approved, reason = _verification_report(self.assignment)
+
+        self.assertTrue(approved)
+        self.assertEqual(reason, "")
+        self.assertFalse(report["github_checks_required"])
+        self.assertEqual(report["github_checks_status"], "NOT_CONFIGURED_OPTIONAL")
+        self.assertTrue(report["github_exact_commit_verified"])
+        self.assertEqual(report["verifier_agent"]["verdict"], "APPROVED")
+
+    @patch("workers.execution_verification.GitHubAppExecutionClient.for_job")
+    def test_funded_policy_can_explicitly_require_a_check_run(self, github_for_job):
+        snapshot = self.job.draft.funding_snapshot
+        snapshot.policy_commitment = {
+            **snapshot.policy_commitment,
+            "requireGithubChecks": True,
+        }
+        snapshot.save(update_fields=["policy_commitment"])
+        github_for_job.return_value.pull_request.return_value = PullRequestSnapshot(
+            number=42,
+            html_url="https://github.com/example/flask-repo/pull/42",
+            state="open",
+            merged=False,
+            head_ref="veyra/job-44-logicbloom",
+            head_sha="c" * 40,
+            base_ref="main",
+            changed_files=("app.py", "tests/test_app.py"),
+        )
+        github_for_job.return_value.check_runs.return_value = []
+
+        with self.assertRaisesMessage(
+            ExecutionVerificationPending,
+            "GitHub CI is required for this funded job, but no Check Run is available for the exact submitted commit yet",
+        ):
+            _verification_report(self.assignment)
+
+    @patch("workers.execution_verification.GitHubAppExecutionClient.for_job")
+    def test_wrong_pull_request_head_sha_never_counts_as_exact_submission(self, github_for_job):
+        github_for_job.return_value.pull_request.return_value = PullRequestSnapshot(
+            number=42,
+            html_url="https://github.com/example/flask-repo/pull/42",
+            state="open",
+            merged=False,
+            head_ref="veyra/job-44-logicbloom",
+            head_sha="d" * 40,
+            base_ref="main",
+            changed_files=("app.py", "tests/test_app.py"),
+        )
+        github_for_job.return_value.check_runs.return_value = [
+            {
+                "name": "repository tests",
+                "status": "completed",
+                "conclusion": "success",
+                "details_url": "https://github.com/example/flask-repo/actions/runs/3",
+            }
+        ]
+
+        report, approved, reason = _verification_report(self.assignment)
+
+        self.assertFalse(approved)
+        self.assertFalse(report["exact_pull_request"])
+        self.assertIn("no longer matches", reason)
+
+    @patch("workers.execution_verification._sync_reputation")
+    @patch("workers.execution_verification._build_settlement_transaction")
+    @patch("workers.execution_verification._verification_report")
+    def test_approved_verification_builds_and_confirms_settlement_once(
+        self,
+        verification_report,
+        build_settlement_transaction,
+        sync_reputation,
+    ):
+        verification_report.return_value = (
+            {"version": 2, "approved": True},
+            True,
+            "",
+        )
+        build_settlement_transaction.return_value = (
+            "0x" + "56" * 32,
+            "0x1234",
+            7,
+        )
+        arc = MagicMock()
+        arc.assert_chain = MagicMock()
+        arc.get_job.side_effect = [
+            {
+                "status": "SUBMITTED",
+                "provider": self.worker.worker_wallet_address.lower(),
+                "deliverable_hash": self.assignment.queue_item.submission_deliverable_hash.lower(),
+            },
+            {
+                "status": "COMPLETED",
+                "client_status": "COMPLETED",
+                "report_hash": "0x" + "12" * 32,
+                "evidence_hash": "0x" + "34" * 32,
+                "rejection_reason_hash": "0x" + "00" * 32,
+            },
+        ]
+        arc.contract_call.return_value = bytes.fromhex("34" * 32)
+        arc.wait_for_transaction_receipt.return_value = {
+            "status": 1,
+            "blockNumber": 123,
+        }
+
+        first = verify_and_settle_assignment(self.assignment, arc_client=arc)
+        second = verify_and_settle_assignment(self.assignment, arc_client=arc)
+
+        self.assertTrue(first.approved)
+        self.assertEqual(first.status, WorkerJobAssignment.Status.COMPLETED)
+        self.assertEqual(first, second)
+        build_settlement_transaction.assert_called_once()
+        arc.broadcast_signed_transaction.assert_called_once()
+        arc.wait_for_transaction_receipt.assert_called_once()
+        sync_reputation.assert_called_once()
+
+    @override_settings(VEYRA_REQUIRE_GITHUB_CHECKS=False)
+    @patch("workers.execution_verification.GitHubAppExecutionClient.for_job")
+    def test_optional_ci_still_rejects_a_present_failed_check(self, github_for_job):
+        github_for_job.return_value.pull_request.return_value = PullRequestSnapshot(
+            number=42,
+            html_url="https://github.com/example/flask-repo/pull/42",
+            state="open",
+            merged=False,
+            head_ref="veyra/job-44-logicbloom",
+            head_sha="c" * 40,
+            base_ref="main",
+            changed_files=("app.py", "tests/test_app.py"),
+        )
+        github_for_job.return_value.check_runs.return_value = [
+            {
+                "name": "repository tests",
+                "status": "completed",
+                "conclusion": "failure",
+                "details_url": "https://github.com/example/flask-repo/actions/runs/2",
+            }
+        ]
+        value = reserve_verifier_for_assignment(self.assignment)
+        task = verification_task_for_connection(self.verifier_connection)
+        value.refresh_from_db()
+        submit_verifier_result(
+            connection=self.verifier_connection,
+            payload=self._signed_submission(value, task, self._approval_report()),
+        )
+        self.assignment.refresh_from_db()
+
+        report, approved, reason = _verification_report(self.assignment)
+
+        self.assertFalse(approved)
+        self.assertEqual(report["github_checks_status"], "FAILED")
+        self.assertIn("mandatory GitHub CI checks", reason)

@@ -47,6 +47,7 @@ def _empty_runtime() -> dict:
         "protocol_version": None,
         "public_key_fingerprint": "",
         "connection_method": "COPY_LINK_V1",
+        "progress": {},
     }
 
 
@@ -55,6 +56,11 @@ def _hosted_connection_snapshot(worker: WorkerAgent) -> dict | None:
         connection = worker.hosted_connection
     except HostedAgentConnection.DoesNotExist:
         return None
+
+    metadata = connection.metadata if isinstance(connection.metadata, dict) else {}
+    progress = metadata.get("runtime_progress")
+    if not isinstance(progress, dict):
+        progress = {}
 
     base = {
         "paired": connection.status != HostedAgentConnection.Status.REVOKED,
@@ -79,6 +85,7 @@ def _hosted_connection_snapshot(worker: WorkerAgent) -> dict | None:
         "protocol_version": connection.protocol_version,
         "public_key_fingerprint": connection.public_key_fingerprint,
         "connection_method": "COPY_LINK_V1",
+        "progress": progress,
     }
 
     if connection.status == HostedAgentConnection.Status.REVOKED:
@@ -140,6 +147,7 @@ def runtime_snapshot(worker: WorkerAgent) -> dict:
         "protocol_version": tools.get("protocol_version"),
         "public_key_fingerprint": "",
         "connection_method": "LEGACY_PAIRING",
+        "progress": {},
     }
 
     if (

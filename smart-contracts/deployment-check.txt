@@ -1,0 +1,29 @@
+**********************
+Windows PowerShell transcript start
+Start time: 20260718122759
+Username: DESKTOP-GTVCO4N\cashkink
+RunAs User: DESKTOP-GTVCO4N\cashkink
+Configuration Name:
+Machine: DESKTOP-GTVCO4N (Microsoft Windows NT 10.0.26100.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe
+Process ID: 36608
+PSVersion: 5.1.26100.4202
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.4202
+BuildVersion: 10.0.26100.4202
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is .\deployment-check.txt
+PS C:\Users\cashkink\Downloads\Veyra\Veyra-Contract> npm run check:deployment
+Claim-to-submission period: 43200
+Escrow solvent: true
+Agent authorised: true
+Verifier authorised: true
+PS C:\Users\cashkink\Downloads\Veyra\Veyra-Contract> Stop-Transcript
+**********************
+Windows PowerShell transcript end
+End time: 20260718122837
+**********************

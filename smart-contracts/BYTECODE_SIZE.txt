@@ -1,0 +1,3 @@
+Creation bytecode: 13383 bytes
+Runtime bytecode: 12700 bytes
+EVM limit: 24576 bytes

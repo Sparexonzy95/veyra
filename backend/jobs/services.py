@@ -8,6 +8,7 @@ from blockchain.client import ArcClient
 from blockchain.services import available_client_action
 from common.models import AuditLog
 from common.utils import canonical_json, to_atomic_usdc
+from jobs.github_app import GitHubAppError, github_ci_preflight
 from jobs.models import JobDraft, JobFundingSnapshot, VeyraJob
 from wallets.circle import CircleClient
 from wallets.models import CircleTransaction, WalletAccount
@@ -88,6 +89,7 @@ def lock_funding_snapshot(draft: JobDraft):
         'forbiddenPaths': advanced.get('forbidden_paths', []),
         'deliveryType': advanced.get('delivery_type', 'PULL_REQUEST'),
         'agentAccess': 'INVITED' if advanced.get('invited_provider_address') else 'OPEN',
+        'requireGithubChecks': bool(advanced.get('require_github_checks', False)),
     }
     invited = (advanced.get('invited_provider_address') or ZERO_ADDRESS).lower()
     snapshot = JobFundingSnapshot.objects.create(
@@ -107,6 +109,36 @@ def lock_funding_snapshot(draft: JobDraft):
     draft.save(update_fields=['status', 'updated_at'])
     return snapshot
 
+
+
+def ensure_required_github_ci_ready(draft: JobDraft):
+    """Block funding when an explicitly required GitHub CI gate is not usable.
+
+    The client may choose whether GitHub CI is part of the funded policy. When
+    they choose it, Veyra proves repository readiness before any funding
+    snapshot or wallet challenge is created. This prevents an escrow from being
+    locked behind a CI condition the repository cannot currently produce.
+    """
+
+    advanced = draft.advanced_options or {}
+    if not bool(advanced.get('require_github_checks', False)):
+        return None
+
+    access = getattr(draft, 'github_repository_access', None)
+    if not access:
+        raise ValidationError(
+            'Connect this repository through the Veyra GitHub App before requiring GitHub CI.'
+        )
+    try:
+        result = github_ci_preflight(access, branch=draft.target_branch)
+    except GitHubAppError as exc:
+        raise ValidationError(str(exc)) from exc
+    if not result.get('ready'):
+        raise ValidationError(
+            result.get('message')
+            or 'GitHub CI is required, but Veyra could not confirm CI readiness for this repository.'
+        )
+    return result
 
 def verify_circle_session_for_user(user, user_token):
     wallet = user.wallet_accounts.filter(
@@ -216,6 +248,7 @@ def _create_contract_challenge(*, user, wallet, user_token, draft, purpose, cont
 
 
 def create_approval_challenge(draft, user_token):
+    ensure_required_github_ci_ready(draft)
     snapshot = lock_funding_snapshot(draft)
     circle, wallet = verify_circle_session_for_user(draft.client, user_token)
     arc = ArcClient()
@@ -250,6 +283,7 @@ def create_approval_challenge(draft, user_token):
 
 
 def create_job_challenge(draft, user_token):
+    ensure_required_github_ci_ready(draft)
     snapshot = lock_funding_snapshot(draft)
     _, wallet = verify_circle_session_for_user(draft.client, user_token)
     arc = ArcClient()

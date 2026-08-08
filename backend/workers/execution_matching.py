@@ -15,6 +15,7 @@ from workers.discovery import discover_job
 from workers.execution_control import log_event
 from workers.hosted_agent_connection import runtime_is_online
 from workers.models import (
+    AgentWithdrawal,
     HostedAgentConnection,
     WorkerAgent,
     WorkerJobAssignment,
@@ -88,6 +89,11 @@ def rank_candidates_for_job(job: VeyraJob, *, excluded_worker_ids: Iterable[str]
             contract_authorised=True,
             auto_claim_enabled=True,
             discovery_enabled=True,
+        ).exclude(
+            withdrawals__status__in=[
+                AgentWithdrawal.Status.SUBMITTING,
+                AgentWithdrawal.Status.PENDING,
+            ]
         ).select_related("hosted_connection", "reputation_snapshot")
     )
     since = timezone.now() - timedelta(days=7)

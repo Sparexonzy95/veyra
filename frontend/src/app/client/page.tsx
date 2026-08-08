@@ -1,25 +1,48 @@
 "use client";
 
-import { OnchainJobCard } from "@/components/jobs/job-card";
-import { useVeyra } from "@/components/providers/veyra-provider";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
-import type { DashboardResponse } from "@/types/veyra";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { Panel } from "@/components/dashboard/panel";
 import {
-  Activity,
+  DashboardPagination,
+  PAGE_SIZE,
+  pageCount,
+  usePageParam,
+} from "@/components/dashboard/pagination";
+import { StatCard } from "@/components/dashboard/stat-card";
+import { EmptyState, ErrorState, LoadingCards } from "@/components/dashboard/states";
+import { OnchainJobCard } from "@/components/jobs/job-card";
+import { Button } from "@/components/ui/button";
+import { apiFetch } from "@/lib/api";
+import type { DashboardResponse, JobSummary } from "@/types/veyra";
+import {
   BriefcaseBusiness,
-  CheckCircle,
-  CircleDollarSign,
+  CheckCircle2,
   Clock,
+  Loader2,
   Plus,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+function jobState(job: JobSummary) {
+  return (job.client_status || job.status || "OPEN").toUpperCase();
+}
+
+/**
+ * Client Overview: four counts and the most recent jobs. Nothing else.
+ *
+ * What used to be here and is now gone:
+ *
+ *   - a Recent activity panel, duplicating the Activity page it linked to;
+ *   - a bespoke six-column job table, which was a second design for the
+ *     same object the Jobs page already renders as a card. Two designs for
+ *     one thing means every future change has to be made twice, and the
+ *     table carried columns (repository, deadline) that vanished on mobile.
+ *
+ * The job grid, the card, the page size and the pagination control are now
+ * literally the same components the Jobs page uses.
+ */
 export default function ClientOverviewPage() {
-  const { me } = useVeyra();
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,97 +53,142 @@ export default function ClientOverviewPage() {
       setData(await apiFetch<DashboardResponse>("/api/v1/client/dashboard/"));
       setError(null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Client overview could not be loaded.");
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Dashboard could not be loaded.",
+      );
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const openJobs = (data?.job_counts.OPEN ?? 0) + (data?.job_counts.FUNDED ?? 0);
-  const workingJobs = data?.job_counts.AGENT_WORKING ?? 0;
-  const completedJobs = data?.job_counts.COMPLETED ?? 0;
+  const jobs = useMemo(() => data?.jobs ?? [], [data]);
+  const count = (...states: string[]) =>
+    jobs.filter((job) => states.includes(jobState(job))).length;
+
+  const metrics = [
+    { label: "Open", value: count("OPEN", "FUNDED"), icon: BriefcaseBusiness },
+    {
+      label: "In Progress",
+      value: count("CLAIMED", "AGENT_WORKING", "IN_PROGRESS"),
+      icon: Loader2,
+    },
+    {
+      label: "Awaiting Verification",
+      value: count("SUBMITTED", "VERIFYING", "AWAITING_VERIFICATION"),
+      icon: Clock,
+    },
+    {
+      label: "Completed",
+      value: count("COMPLETED", "SETTLED"),
+      icon: CheckCircle2,
+    },
+  ];
+
+  // Same page size as the Jobs grid, from the same constant, so the two
+  // pages cannot drift to different sizes.
+  const { page, setPage } = usePageParam();
+  const totalPages = pageCount(jobs.length, PAGE_SIZE.cards);
+  const visible = jobs.slice((page - 1) * PAGE_SIZE.cards, page * PAGE_SIZE.cards);
+  const gridRef = useRef<HTMLDivElement | null>(null);
 
   return (
-    <div className="space-y-7">
-      <div className="flex flex-col justify-between gap-5 border-b pb-6 sm:flex-row sm:items-end">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Client workspace</p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
-            Welcome{me?.user?.display_name ? `, ${me.user.display_name}` : ""}
-          </h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Post GitHub work, fund jobs, and track verified delivery.
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/client/jobs/new"><Plus className="h-4 w-4" /> Create Job</Link>
-        </Button>
-      </div>
+    <>
+      <PageHeader
+        title="Overview"
+        description="Track published work and settlement at a glance."
+        actions={
+          <Button asChild size="sm">
+            <Link href="/client/jobs/new">
+              <Plus className="mr-1.5 h-4 w-4" />
+              Create Job
+            </Link>
+          </Button>
+        }
+      />
 
-      {error ? <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{error}</div> : null}
+      {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {loading ? Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-32 rounded-xl" />) : (
-          <>
-            <Metric title="Wallet balance" value={`${data?.wallet?.usdc_balance ?? "0"} USDC`} detail="Available on Arc" icon={CircleDollarSign} />
-            <Metric title="Open jobs" value={String(openJobs)} detail="Finding an agent" icon={BriefcaseBusiness} />
-            <Metric title="Jobs in progress" value={String(workingJobs)} detail="Delivery underway" icon={Clock} />
-            <Metric title="Completed jobs" value={String(completedJobs)} detail="Verified and settled" icon={CheckCircle} />
-          </>
+      <section
+        aria-label="Job summary"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+      >
+        {loading ? (
+          <LoadingCards count={4} />
+        ) : (
+          metrics.map((metric) => (
+            <StatCard
+              key={metric.label}
+              label={metric.label}
+              value={metric.value}
+              icon={metric.icon}
+            />
+          ))
         )}
-      </div>
+      </section>
 
-      <div className="grid gap-6 xl:grid-cols-[1.5fr_0.8fr]">
-        <section>
-          <div className="mb-4 flex items-center justify-between">
-            <div><h2 className="text-lg font-semibold">Recent jobs</h2><p className="text-sm text-muted-foreground">Progress and delivery at a glance.</p></div>
-            <Button variant="ghost" asChild><Link href="/client/jobs">View all</Link></Button>
+      <section aria-labelledby="recent-jobs" className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="recent-jobs" className="text-sm font-semibold">
+            Recent Jobs
+          </h2>
+          {/* "View all" is kept only because pagination here walks the
+              dashboard's own recent set, which is not the whole job list:
+              the Jobs page adds drafts, search and status filters. It is a
+              different destination, not a second route to the same place. */}
+          <Link
+            href="/client/jobs"
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            View all
+          </Link>
+        </div>
+
+        {loading ? (
+          <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: PAGE_SIZE.cards }).map((_, index) => (
+              <div
+                key={index}
+                className="h-48 animate-pulse rounded-lg border border-border bg-muted/40"
+              />
+            ))}
           </div>
-          {loading ? <Skeleton className="h-64 rounded-xl" /> : data?.jobs.length ? (
-            <div className="grid gap-4 md:grid-cols-2">{data.jobs.slice(0, 4).map((job) => <OnchainJobCard key={job.onchain_job_id} job={job} />)}</div>
-          ) : (
-            <Card><CardContent className="py-12 text-center"><BriefcaseBusiness className="mx-auto mb-3 h-8 w-8 text-muted-foreground" /><h3 className="font-semibold">No jobs yet</h3><p className="mt-1 text-sm text-muted-foreground">Create your first GitHub job when you are ready.</p></CardContent></Card>
-          )}
-        </section>
-
-        <section>
-          <div className="mb-4"><h2 className="text-lg font-semibold">Recent activity</h2><p className="text-sm text-muted-foreground">Updates from your jobs and payments.</p></div>
-          <Card>
-            <CardContent className="divide-y p-0">
-              {data?.notifications.length ? data.notifications.slice(0, 6).map((item) => (
-                <div key={item.id} className="flex gap-3 p-4">
-                  <Activity className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  <div><p className="text-sm font-medium">{item.title}</p><p className="mt-1 text-xs text-muted-foreground">{item.body}</p></div>
-                </div>
-              )) : <p className="p-6 text-sm text-muted-foreground">No recent activity.</p>}
-            </CardContent>
-          </Card>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function Metric({
-  title,
-  value,
-  detail,
-  icon: Icon,
-}: {
-  title: string;
-  value: string;
-  detail: string;
-  icon: typeof Activity;
-}) {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
-      </CardHeader>
-      <CardContent><div className="text-2xl font-bold">{value}</div><p className="text-xs text-muted-foreground">{detail}</p></CardContent>
-    </Card>
+        ) : jobs.length ? (
+          <div ref={gridRef} className="space-y-4">
+            <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {visible.map((job) => (
+                <OnchainJobCard key={job.onchain_job_id} job={job} />
+              ))}
+            </div>
+            <DashboardPagination
+              page={page}
+              totalPages={totalPages}
+              totalItems={jobs.length}
+              onPageChange={setPage}
+              scrollTargetRef={gridRef}
+              className="rounded-lg border border-border bg-card"
+            />
+          </div>
+        ) : (
+          <Panel>
+            <EmptyState
+              icon={BriefcaseBusiness}
+              title="No jobs yet"
+              description="Publish your first job to put an agent to work."
+              action={
+                <Button asChild size="sm" variant="outline">
+                  <Link href="/client/jobs/new">Create Job</Link>
+                </Button>
+              }
+            />
+          </Panel>
+        )}
+      </section>
+    </>
   );
 }

@@ -31,6 +31,7 @@ node_modules/
 out/
 dist/
 coverage/
+build/
 *.tsbuildinfo
 
 # Logs and temporary files
@@ -48,6 +49,7 @@ Thumbs.db
 # Editors
 .vscode/
 .idea/
+*.code-workspace
 
 # Local archives and patch files
 *.zip
@@ -59,6 +61,7 @@ backend/*.json
 
 # Local recovery backups
 _patch_backups/
+.veyra-patch-backups/
 
 # Owner-hosted runtime state and disposable workspaces
 .veyra-runtime/
@@ -68,3 +71,19 @@ workspaces/
 # Local stack launcher process ownership and ignored logs
 .veyra-local/
 .veyra-local-processes.json
+.runtime-logs/
+%VEYRA_EDGE_PROFILE%/
+
+# Smart contracts.
+#
+# Dependencies and Hardhat build output are reproducible from
+# smart-contracts/package-lock.json, so they are not published. The Solidity
+# sources, tests, deployable ABI/bytecode package and deployments/arc-testnet.json
+# ARE published: they are the verifiable record of the Arc deployment.
+smart-contracts/node_modules/
+smart-contracts/artifacts/
+smart-contracts/cache/
+smart-contracts/coverage/
+smart-contracts/.env
+smart-contracts/.env.*
+!smart-contracts/.env.example

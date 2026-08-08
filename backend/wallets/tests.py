@@ -3,7 +3,7 @@ from django.conf import settings
 from django.test import TestCase, override_settings
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
-from accounts.models import PendingCircleAuth, User, UserCapability
+from accounts.models import ClientProfile, PendingCircleAuth, User, UserCapability, VeyraSession
 from accounts.services import create_pending_circle_auth
 from wallets.services import sync_wallet_for_existing_user
 from wallets.models import WalletAccount
@@ -22,6 +22,7 @@ class WalletProvisioningTests(TestCase):
         )
         pending.requested_capability = 'CLIENT'
         pending.save(update_fields=['requested_capability'])
+        self.pending = pending
         self.client.cookies[settings.VEYRA_ONBOARDING_COOKIE] = raw
         self.client.credentials(HTTP_ORIGIN='http://localhost:3000')
 
@@ -52,6 +53,46 @@ class WalletProvisioningTests(TestCase):
         self.assertEqual(wallet.account_type, 'SCA')
         self.assertTrue(UserCapability.objects.filter(user=wallet.user, code='CLIENT').exists())
         self.assertIn(settings.VEYRA_SESSION_COOKIE, response.cookies)
+
+    @patch('wallets.views.CircleClient.initialize_user_wallet')
+    @patch('wallets.views.CircleClient.list_wallets')
+    def test_stale_email_pending_cannot_initialize_circle_wallet(self, list_wallets, initialize_wallet):
+        PendingCircleAuth.objects.filter(pk=self.pending.pk).update(auth_method='EMAIL')
+
+        response = self.client.post(
+            '/api/v1/client/wallet/initialize/',
+            {'circle_user_id': 'email-user', 'auth_method': 'EMAIL'},
+            format='json',
+            HTTP_X_CIRCLE_USER_TOKEN=self.user_token,
+        )
+
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(response.data['code'], 'email_auth_disabled')
+        list_wallets.assert_not_called()
+        initialize_wallet.assert_not_called()
+        self.assertEqual(User.objects.count(), 0)
+        self.assertEqual(ClientProfile.objects.count(), 0)
+        self.assertEqual(VeyraSession.objects.count(), 0)
+        self.assertEqual(WalletAccount.objects.count(), 0)
+
+    @patch('wallets.views.CircleClient.list_wallets')
+    def test_stale_email_pending_cannot_sync_or_create_local_rows(self, list_wallets):
+        PendingCircleAuth.objects.filter(pk=self.pending.pk).update(auth_method='EMAIL')
+
+        response = self.client.post(
+            '/api/v1/client/wallet/sync/',
+            {'circle_user_id': 'email-user', 'auth_method': 'EMAIL'},
+            format='json',
+            HTTP_X_CIRCLE_USER_TOKEN=self.user_token,
+        )
+
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(response.data['code'], 'email_auth_disabled')
+        list_wallets.assert_not_called()
+        self.assertEqual(User.objects.count(), 0)
+        self.assertEqual(ClientProfile.objects.count(), 0)
+        self.assertEqual(VeyraSession.objects.count(), 0)
+        self.assertEqual(WalletAccount.objects.count(), 0)
 
     def test_existing_arc_wallet_cannot_be_silently_replaced(self):
         user = User.objects.create_user(handle='wallet-owner')

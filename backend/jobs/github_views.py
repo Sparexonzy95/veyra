@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import AllowAny
@@ -11,12 +13,15 @@ from jobs.github_app import (
     GitHubAppError,
     app_is_configured,
     install_url,
+    github_ci_preflight,
     list_repository_issues,
     parse_install_state,
     sync_installation,
     verify_webhook_signature,
 )
 from jobs.models import GitHubAppInstallation, GitHubRepositoryAccess
+
+logger = logging.getLogger(__name__)
 
 
 def _installation_payload(item: GitHubAppInstallation) -> dict:
@@ -104,19 +109,59 @@ class GitHubInstallCompleteView(APIView):
 
     def post(self, request):
         state_value = str(request.data.get("state") or "").strip()
-        installation_id = request.data.get("installation_id")
-        if not state_value or not installation_id:
+        raw_installation_id = str(request.data.get("installation_id") or "").strip()
+        # `setup_action` describes what the user did on GitHub ("install",
+        # "update", "request"). It is never an OAuth code and is never treated
+        # as one: it is recorded for diagnostics only and takes no part in
+        # authenticating or identifying the installation.
+        setup_action = str(request.data.get("setup_action") or "").strip()
+
+        # Diagnostics record which fields arrived and whether they parsed, never
+        # their values, so the signed state cannot end up in the server log.
+        logger.info(
+            "github install complete: fields=%s setup_action=%s",
+            sorted(k for k in request.data.keys()),
+            setup_action or "(none)",
+        )
+
+        if not state_value or not raw_installation_id:
+            missing = [
+                name
+                for name, present in (
+                    ("state", bool(state_value)),
+                    ("installation_id", bool(raw_installation_id)),
+                )
+                if not present
+            ]
+            logger.warning("github install complete rejected: missing=%s", missing)
             return Response(
-                {"detail": "GitHub returned an incomplete installation callback."},
+                {
+                    "detail": "GitHub returned an incomplete installation callback.",
+                    "missing_fields": missing,
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # GitHub sends the installation id as a numeric string. Convert it here
+        # so a malformed value produces a clear 400 instead of surfacing as an
+        # unrelated 409 from the sync path below.
+        try:
+            installation_id = int(raw_installation_id)
+        except (TypeError, ValueError):
+            logger.warning("github install complete rejected: installation_id not numeric")
+            return Response(
+                {"detail": "GitHub returned an invalid installation identifier."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         state_payload = parse_install_state(state_value, user_id=str(request.user.id))
         try:
             installation = sync_installation(
                 client=request.user,
-                installation_id=int(installation_id),
+                installation_id=installation_id,
             )
         except (GitHubAppError, ValueError) as exc:
+            logger.warning("github install sync failed for user %s", request.user.id)
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         repositories = installation.repositories.filter(active=True).order_by("full_name")
         return Response(
@@ -171,6 +216,43 @@ class GitHubRepositoryIssueListView(APIView):
                 "issues": issues,
             }
         )
+
+
+class GitHubRepositoryCiPreflightView(APIView):
+    permission_classes = [HasClientCapability]
+
+    def get(self, request, repository_access_id):
+        repository = (
+            GitHubRepositoryAccess.objects.select_related("installation")
+            .filter(
+                id=repository_access_id,
+                installation__client=request.user,
+                active=True,
+            )
+            .first()
+        )
+        if not repository:
+            return Response(
+                {"detail": "Approved GitHub repository was not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if repository.installation.status != GitHubAppInstallation.Status.CONNECTED:
+            return Response(
+                {
+                    "detail": (
+                        "The GitHub App connection for this repository is not healthy. "
+                        "Reconnect or refresh it before checking CI."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        branch = str(request.query_params.get("branch") or repository.default_branch or "main").strip()
+        try:
+            result = github_ci_preflight(repository, branch=branch)
+        except GitHubAppError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(result)
 
 
 class GitHubInstallationRefreshView(APIView):

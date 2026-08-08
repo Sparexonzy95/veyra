@@ -3,19 +3,29 @@ from django.db import transaction
 from django.utils import timezone
 
 from jobs.models import VeyraJob
+from workers.execution_recovery import is_retryable_runtime_failure
 from workers.models import WorkerJobAssignment, WorkerJobQueueItem
 
 
 class Command(BaseCommand):
-    help = "Retry a claimed job after an AI provider 402 failure."
+    help = "Retry a claimed job after a retryable AI provider or runtime failure."
 
     def add_arguments(self, parser):
         parser.add_argument("--repository", required=True)
         parser.add_argument("--issue", type=int, required=True)
+        parser.add_argument(
+            "--reuse-current-attempt",
+            action="store_true",
+            help=(
+                "Replay the failed runtime step without incrementing platform attempt "
+                "counters. Intended for an operator-applied runtime fix."
+            ),
+        )
 
     def handle(self, *args, **options):
         repository = options["repository"].strip()
         issue_number = options["issue"]
+        reuse_current_attempt = bool(options["reuse_current_attempt"])
 
         if "/" not in repository:
             raise CommandError("Repository must use OWNER/REPOSITORY format.")
@@ -97,8 +107,18 @@ class Command(BaseCommand):
                 )
                 return
 
+            if reuse_current_attempt and (
+                assignment.status != WorkerJobAssignment.Status.FAILED
+                or not is_retryable_runtime_failure(assignment)
+            ):
+                raise CommandError(
+                    "The current platform attempt can only be replayed after a "
+                    "retryable runtime or AI-provider failure."
+                )
+
             assignment.status = WorkerJobAssignment.Status.CLAIMED
-            assignment.assignment_attempt = int(assignment.assignment_attempt or 0) + 1
+            if not reuse_current_attempt:
+                assignment.assignment_attempt = int(assignment.assignment_attempt or 0) + 1
             assignment.execution_lease_id = None
             assignment.lease_expires_at = None
             assignment.leased_at = None
@@ -130,9 +150,10 @@ class Command(BaseCommand):
             )
 
             item.status = WorkerJobQueueItem.Status.CLAIMED
-            item.execution_attempt_count = (
-                int(item.execution_attempt_count or 0) + 1
-            )
+            if not reuse_current_attempt:
+                item.execution_attempt_count = (
+                    int(item.execution_attempt_count or 0) + 1
+                )
             item.execution_branch_name = ""
             item.execution_workspace_name = ""
             item.execution_baseline_test_passed = None
@@ -174,6 +195,8 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"Recovered {repository} issue #{issue_number}. "
-                f"Arc claim preserved. Worker: {assignment.worker.name}."
+                f"Arc claim preserved. Worker: {assignment.worker.name}. "
+                f"Platform attempt: {assignment.assignment_attempt}"
+                + (" (replayed)." if reuse_current_attempt else ".")
             )
         )

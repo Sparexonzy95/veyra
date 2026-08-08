@@ -1,0 +1,18 @@
+# Dependencies and build output are reproducible from package-lock.json.
+node_modules/
+artifacts/
+cache/
+coverage/
+*.log
+
+# Secrets. Only the template is published.
+.env
+.env.*
+!.env.example
+
+# Deployment records are intentionally NOT ignored.
+#
+# deployments/arc-testnet.json is the public, verifiable record of the
+# VeyraJobEscrow deployment on Arc Testnet: contract address, chain id,
+# payment token and deployment transaction hash. It contains no private
+# key material, so it is published as evidence rather than hidden.

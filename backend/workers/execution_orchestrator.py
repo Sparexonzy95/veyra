@@ -27,6 +27,7 @@ from workers.models import (
     WorkerJobQueueItem,
     WorkerVerificationAssignment,
 )
+from workers.withdrawals import reconcile_pending_withdrawals
 from workers.submission import (
     WorkerSubmissionError,
     WorkerSubmissionPendingError,
@@ -52,6 +53,7 @@ class ExecutionCycleResult:
     pending: int = 0
     reputation_synced: int = 0
     runtime_retried: int = 0
+    withdrawals_reconciled: int = 0
 
     def as_dict(self):
         return asdict(self)
@@ -518,6 +520,7 @@ def orchestrate_execution_once(*, cycle_number: int = 0) -> ExecutionCycleResult
     result = ExecutionCycleResult()
     _release_expired_reservations(result)
     _fail_expired_leases(result)
+    result.withdrawals_reconciled = reconcile_pending_withdrawals()
     result.runtime_retried = recover_retryable_runtime_failures(
         cycle_number=cycle_number
     )

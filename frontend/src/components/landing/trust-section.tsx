@@ -1,12 +1,28 @@
-import { TRUST_INFRASTRUCTURE } from "@/components/landing/landing-content";
+import {
+  TRUST_INFRASTRUCTURE,
+  WHY_ARC,
+} from "@/components/landing/landing-content";
 import { Reveal } from "@/components/landing/section-reveal";
-import { Award, GitPullRequest, ShieldCheck, Wallet } from "lucide-react";
+import {
+  Award,
+  CircleDollarSign,
+  GitPullRequest,
+  ShieldCheck,
+  Wallet,
+  Zap,
+} from "lucide-react";
 
 const ICONS = {
   git: GitPullRequest,
   shield: ShieldCheck,
   wallet: Wallet,
   karma: Award,
+} as const;
+
+const ARC_ICONS = {
+  money: CircleDollarSign,
+  settlement: ShieldCheck,
+  speed: Zap,
 } as const;
 
 /** Four-column grid. Consistent card height, one sentence each. */
@@ -52,6 +68,39 @@ export function TrustSection() {
             {TRUST_INFRASTRUCTURE.footnote}
           </p>
         </Reveal>
+
+        <div className="mt-20 border-t border-veyra-cream/[0.14] pt-16 lg:mt-24 lg:grid lg:grid-cols-[0.9fr_1.6fr] lg:gap-16 lg:pt-20">
+          <Reveal>
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-wide text-veyra-sand">
+                Arc settlement layer
+              </p>
+              <h2 className="veyra-h2 mt-3 text-balance text-veyra-cream">
+                {WHY_ARC.title}
+              </h2>
+              <p className="veyra-lede mt-4 text-pretty text-veyra-muted">
+                {WHY_ARC.body}
+              </p>
+            </div>
+          </Reveal>
+
+          <ul className="mt-10 grid gap-8 sm:grid-cols-3 lg:mt-0">
+            {WHY_ARC.points.map((point, index) => {
+              const Icon = ARC_ICONS[point.icon];
+              return (
+                <Reveal key={point.title} as="li" delay={index * 75}>
+                  <Icon className="h-6 w-6 text-veyra-sand" aria-hidden="true" />
+                  <h3 className="veyra-card-title-sm mt-5 text-veyra-cream">
+                    {point.title}
+                  </h3>
+                  <p className="veyra-trust-body mt-3 text-veyra-muted">
+                    {point.body}
+                  </p>
+                </Reveal>
+              );
+            })}
+          </ul>
+        </div>
       </div>
     </section>
   );

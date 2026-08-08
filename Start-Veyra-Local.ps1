@@ -1,6 +1,6 @@
 param(
-    [ValidateRange(1, 180)]
-    [int]$FrontendWaitSeconds = 90,
+    [ValidateRange(1, 300)]
+    [int]$FrontendWaitSeconds = 180,
     [ValidateRange(1, 180)]
     [int]$AgentWaitSeconds = 60
 )
@@ -12,7 +12,7 @@ $runtimeRoot = Join-Path $projectRoot ".veyra-local"
 $statePath = Join-Path $runtimeRoot "state.json"
 $postgresServiceName = "postgresql-x64-17"
 $powershellPath = (Get-Command powershell.exe -ErrorAction Stop).Source
-$identitySource = "C:\Users\cashkink\Downloads\Veyra-Agent-Starter-Test-2\.veyra-runtime"
+$identitySource = $env:VEYRA_AGENT_IDENTITY_SOURCE
 
 New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
 
@@ -280,13 +280,14 @@ elseif ($null -eq (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
     $results.Frontend = New-Result "Frontend" "FAILED" $frontendUrl "npm.cmd was not found."
 }
 else {
-    foreach ($nextLock in @(
-        (Join-Path $projectRoot "frontend\.next\dev\lock"),
-        (Join-Path $projectRoot "frontend\.next\lock")
-    )) {
-        if (Test-Path -LiteralPath $nextLock -PathType Leaf) {
-            Remove-Item -LiteralPath $nextLock -Force
-        }
+    # .next is generated state. A stale/corrupt development cache previously
+    # left port 3000 dark even though the launcher process existed. Only clear
+    # it when no Veyra frontend process is running, then let plain `next dev`
+    # rebuild it cleanly.
+    $nextRoot = Join-Path $projectRoot "frontend\.next"
+    if (Test-Path -LiteralPath $nextRoot -PathType Container) {
+        Remove-Item -LiteralPath $nextRoot -Recurse -Force
+        Write-Host "Cleared stale frontend .next cache before launch." -ForegroundColor Cyan
     }
     $entry = Start-LauncherProcess "Frontend" (Join-Path $projectRoot "start-frontend.ps1") -CaptureOutput
     Add-OwnedEntry $entry
@@ -308,13 +309,13 @@ else {
     else {
         $destinationIdentity = Join-Path $projectRoot "agent-starter\.veyra-runtime"
         if (-not (Test-Path -LiteralPath $destinationIdentity -PathType Container)) {
-            if (Test-Path -LiteralPath $identitySource -PathType Container) {
+            if ($identitySource -and (Test-Path -LiteralPath $identitySource -PathType Container)) {
                 Copy-Item -LiteralPath $identitySource -Destination $destinationIdentity -Recurse -ErrorAction Stop
                 Write-Host "Restored the existing Agent Starter identity directory without reading or replacing its files." -ForegroundColor Cyan
             }
         }
         if (-not (Test-Path -LiteralPath $destinationIdentity -PathType Container)) {
-            $results.AgentStarter = New-Result "Demo Agent Starter" "FAILED" $agentUrl "No existing Agent Starter identity was found; no identity was generated."
+            $results.AgentStarter = New-Result "Demo Agent Starter" "FAILED" $agentUrl "No existing Agent Starter identity was found. Set VEYRA_AGENT_IDENTITY_SOURCE to an existing identity directory or provision one through the supported Agent Starter flow."
         }
         elseif (-not $pythonReady) { $results.AgentStarter = New-Result "Demo Agent Starter" "FAILED" $agentUrl "Python environment or runtime dependencies are missing." }
         else {

@@ -18,6 +18,7 @@ import { apiFetch, patchJson, postJson } from "@/lib/api";
 import type {
   CircleChallengeResponse,
   CircleTransactionStatus,
+  GitHubCiPreflight,
   GitHubConnectionStatus,
   GitHubIssueListItem,
   GitHubIssuePreview,
@@ -31,6 +32,8 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   Github,
   GitPullRequest,
@@ -45,8 +48,9 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-type Step = "details" | "review" | "funding" | "success";
+type BuilderStep = "task" | "requirements" | "budget" | "review" | "funding" | "success";
 type AgentAccess = "OPEN" | "INVITED";
+type FormStep = Exclude<BuilderStep, "funding" | "success">;
 type ValidationDetectionStatus =
   | "CONFIRMED"
   | "SUGGESTED"
@@ -59,6 +63,104 @@ type CriterionRow = {
 
 const selectClass =
   "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
+
+const FORM_STEPS: Array<{ key: FormStep; number: number; label: string }> = [
+  { key: "task", number: 1, label: "Task" },
+  { key: "requirements", number: 2, label: "Requirements" },
+  { key: "budget", number: 3, label: "Budget" },
+  { key: "review", number: 4, label: "Review" },
+];
+
+const STEP_COPY: Record<
+  FormStep,
+  { title: (editing: boolean) => string; description: string }
+> = {
+  task: {
+    title: (editing) => (editing ? "Edit Job" : "Create Job"),
+    description: "Publish a verified software task.",
+  },
+  requirements: {
+    title: () => "Requirements",
+    description: "",
+  },
+  budget: {
+    title: () => "Budget and Access",
+    description: "",
+  },
+  review: {
+    title: () => "Review Job",
+    description: "",
+  },
+};
+
+/**
+ * The builder's outer frame.
+ *
+ * `asPage` is what /client/jobs/new renders: no overlay, no portal, no close
+ * button, no viewport-height cap - the document scrolls as usual. The dialog
+ * form is still used from the Jobs list, where the builder opens over the
+ * table, so both frames wrap exactly the same steps.
+ */
+function BuilderShell({
+  asPage,
+  open,
+  onOpenChange,
+  locked,
+  children,
+}: {
+  asPage: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  locked: boolean;
+  children: React.ReactNode;
+}) {
+  if (asPage) {
+    return <div className="mx-auto w-full max-w-[960px]">{children}</div>;
+  }
+  return (
+    <Dialog open={open} onOpenChange={(next) => !locked && onOpenChange(next)}>
+      <DialogContent className="max-h-[94vh] max-w-[980px] gap-0 overflow-hidden p-0">
+        {children}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Page heading or dialog heading, with the stepper below either one. */
+function BuilderHeader({
+  asPage,
+  title,
+  description,
+  children,
+}: {
+  asPage: boolean;
+  title: string;
+  description: string;
+  children?: React.ReactNode;
+}) {
+  if (asPage) {
+    return (
+      <div className="mb-5">
+        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+        {description ? (
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        ) : null}
+        {children}
+      </div>
+    );
+  }
+  return (
+    <DialogHeader className="border-b px-6 py-5 pr-14">
+      <DialogTitle>{title}</DialogTitle>
+      <DialogDescription>{description}</DialogDescription>
+      {children}
+    </DialogHeader>
+  );
+}
+
+function isFormStep(step: BuilderStep): step is FormStep {
+  return step !== "funding" && step !== "success";
+}
 
 function rowId() {
   return Math.random().toString(36).slice(2, 10);
@@ -174,14 +276,17 @@ export function CreateJobDialog({
   onOpenChange,
   initialDraft,
   onComplete,
+  asPage = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialDraft?: JobDraft | null;
   onComplete: () => Promise<void> | void;
+  /** Render as a page section rather than a modal. See BuilderShell. */
+  asPage?: boolean;
 }) {
   const { circleToken, executeTrackedChallenge, me } = useVeyra();
-  const [step, setStep] = useState<Step>("details");
+  const [step, setStep] = useState<BuilderStep>("task");
   const [draft, setDraft] = useState<JobDraft | null>(null);
   const [preview, setPreview] = useState<GitHubIssuePreview | null>(null);
   const [githubConnection, setGithubConnection] = useState<GitHubConnectionStatus | null>(null);
@@ -210,15 +315,19 @@ export function CreateJobDialog({
   const [validationSource, setValidationSource] = useState("");
   const [validationConfirmed, setValidationConfirmed] = useState(false);
   const [editingValidation, setEditingValidation] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [deliveryType, setDeliveryType] = useState<"PULL_REQUEST" | "COMMIT">(
     "PULL_REQUEST",
   );
+  const [requireGithubChecks, setRequireGithubChecks] = useState(false);
+  const [ciPreflight, setCiPreflight] = useState<GitHubCiPreflight | null>(null);
+  const [ciPreflightLoading, setCiPreflightLoading] = useState(false);
   const [agentAccess, setAgentAccess] = useState<AgentAccess>("OPEN");
   const [invitedAgent, setInvitedAgent] = useState("");
   const [budget, setBudget] = useState("1");
   const [deadline, setDeadline] = useState(toLocalInput());
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
+
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [progressText, setProgressText] = useState("");
@@ -258,6 +367,7 @@ export function CreateJobDialog({
     numericBalance !== null && Number.isFinite(numericBalance)
       ? Math.max(0, numericBudget - numericBalance)
       : null;
+  const currentFormIndex = FORM_STEPS.findIndex((item) => item.key === step);
 
   const handleGitHubStatus = useCallback((status: GitHubConnectionStatus | null) => {
     setGithubConnection(status);
@@ -289,6 +399,43 @@ export function CreateJobDialog({
       setIssuesLoading(false);
     }
   }, []);
+
+  const runCiPreflight = useCallback(
+    async (
+      repositoryId: string,
+      branch: string,
+      announce = false,
+    ): Promise<GitHubCiPreflight | null> => {
+      if (!repositoryId || !branch) {
+        setCiPreflight(null);
+        return null;
+      }
+
+      setCiPreflightLoading(true);
+      try {
+        const result = await apiFetch<GitHubCiPreflight>(
+          `/api/v1/client/github/app/repositories/${repositoryId}/ci-preflight/?branch=${encodeURIComponent(branch)}`,
+        );
+        setCiPreflight(result);
+        if (announce) {
+          if (result.ready) toast.success("GitHub CI readiness confirmed.");
+          else toast.error(result.message);
+        }
+        return result;
+      } catch (ciError) {
+        setCiPreflight(null);
+        const message =
+          ciError instanceof Error
+            ? ciError.message
+            : "Veyra could not check GitHub CI readiness.";
+        if (announce) toast.error(message);
+        return null;
+      } finally {
+        setCiPreflightLoading(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const repositories = githubConnection?.repositories ?? [];
@@ -322,6 +469,29 @@ export function CreateJobDialog({
     if (!open || !selectedRepositoryId) return;
     void loadRepositoryIssues(selectedRepositoryId);
   }, [loadRepositoryIssues, open, selectedRepositoryId]);
+
+  useEffect(() => {
+    setCiPreflight(null);
+    if (
+      !open ||
+      !requireGithubChecks ||
+      !selectedRepositoryId ||
+      !preview?.target_branch
+    ) {
+      return;
+    }
+    void runCiPreflight(
+      selectedRepositoryId,
+      preview.target_branch,
+      false,
+    );
+  }, [
+    open,
+    preview?.target_branch,
+    requireGithubChecks,
+    runCiPreflight,
+    selectedRepositoryId,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -370,15 +540,16 @@ export function CreateJobDialog({
       setValidationSource(savedCommands.length ? "Saved with this job" : "");
       setValidationConfirmed(savedCommands.length > 0);
       setEditingValidation(savedCommands.length === 0);
-      setAdvancedOpen(savedCommands.length === 0);
       setDeliveryType(advanced.delivery_type ?? "PULL_REQUEST");
+      setRequireGithubChecks(Boolean(advanced.require_github_checks));
+      setCiPreflight(null);
       setInvitedAgent(advanced.invited_provider_address ?? "");
       setAgentAccess(
         advanced.invited_provider_address ? "INVITED" : "OPEN",
       );
       setBudget(initialDraft.budget_usdc);
       setDeadline(toLocalInput(initialDraft.deadline));
-      setStep(initialDraft.status === "DRAFT" ? "details" : "review");
+      setStep(initialDraft.status === "DRAFT" ? "task" : "review");
       return;
     }
 
@@ -400,13 +571,15 @@ export function CreateJobDialog({
     setValidationSource("");
     setValidationConfirmed(false);
     setEditingValidation(false);
-    setAdvancedOpen(false);
     setDeliveryType("PULL_REQUEST");
+    setRequireGithubChecks(false);
+    setCiPreflight(null);
+    setCiPreflightLoading(false);
     setAgentAccess("OPEN");
     setInvitedAgent("");
     setBudget("1");
     setDeadline(toLocalInput());
-    setStep("details");
+    setStep("task");
   }, [initialDraft, open]);
 
   useEffect(() => {
@@ -456,7 +629,6 @@ export function CreateJobDialog({
       setValidationSource(detection?.source ?? "");
       setValidationConfirmed(detectedStatus === "CONFIRMED");
       setEditingValidation(detectedStatus !== "CONFIRMED");
-      setAdvancedOpen(detectedStatus !== "CONFIRMED");
       setDeliveryType("PULL_REQUEST");
       toast.success(
         detectedStatus === "CONFIRMED"
@@ -539,6 +711,78 @@ export function CreateJobDialog({
     return null;
   }
 
+  function currentStepError(currentStep: FormStep) {
+    if (currentStep === "task") {
+      if (!githubConnection?.connected) {
+        return "Connect the repository through the Veyra GitHub App first.";
+      }
+      if (!preview) return "Select and load a GitHub issue first.";
+      if (!jobTitle.trim()) return "Add a task title.";
+      if (!jobDescription.trim()) return "Add a task description.";
+    }
+
+    if (currentStep === "requirements") {
+      if (!validCriteria.length) return "Add at least one acceptance item.";
+      if (!requiredSkills.length) return "Add at least one required technology.";
+      if (!newlineList(requiredCommands).length) {
+        return "Add the tests or command used to verify the work.";
+      }
+      if (!validationConfirmed) return "Confirm the required tests before continuing.";
+      if (requireGithubChecks && ciPreflightLoading) {
+        return "Veyra is still checking GitHub CI readiness.";
+      }
+      if (requireGithubChecks && !ciPreflight?.ready) {
+        return (
+          ciPreflight?.message ??
+          "GitHub CI is required. Confirm repository CI readiness before continuing."
+        );
+      }
+    }
+
+    if (currentStep === "budget") {
+      if (Number(budget) < 1) return "The minimum reward is 1 USDC.";
+      if (
+        !deadline ||
+        new Date(deadline).getTime() <= Date.now() + 15 * 60 * 1000
+      ) {
+        return "Choose a deadline at least 15 minutes from now.";
+      }
+      if (
+        agentAccess === "INVITED" &&
+        !/^0x[a-fA-F0-9]{40}$/.test(invitedAgent.trim())
+      ) {
+        return "Enter a valid invited worker wallet address.";
+      }
+    }
+
+    return null;
+  }
+
+  async function continueForm() {
+    if (step === "funding" || step === "success" || step === "review") return;
+
+    const message = currentStepError(step);
+    if (message) {
+      setError(message);
+      return;
+    }
+
+    setError(null);
+    if (step === "budget") {
+      await reviewJob();
+      return;
+    }
+
+    setStep(step === "task" ? "requirements" : "budget");
+  }
+
+  function backForm() {
+    setError(null);
+    if (step === "review") setStep("budget");
+    else if (step === "budget") setStep("requirements");
+    else if (step === "requirements") setStep("task");
+  }
+
   function draftPayload() {
     return {
       github_issue_url: githubUrl.trim(),
@@ -564,6 +808,7 @@ export function CreateJobDialog({
         forbidden_paths: newlineList(forbiddenPaths),
         required_commands: newlineList(requiredCommands),
         delivery_type: deliveryType,
+        require_github_checks: requireGithubChecks,
       },
     };
   }
@@ -787,44 +1032,89 @@ export function CreateJobDialog({
     onOpenChange(false);
   }
 
-  return (
-    <Dialog open={open} onOpenChange={(next) => !loading && onOpenChange(next)}>
-      <DialogContent className="max-h-[94vh] max-w-[980px] gap-0 overflow-hidden p-0">
-        <DialogHeader className="border-b px-6 py-5 pr-14">
-          <DialogTitle>
-            {step === "details"
-              ? draft
-                ? "Edit Job"
-                : "Create Job"
-              : step === "review"
-                ? "Review Job"
-                : step === "funding"
-                  ? "Fund Job"
-                  : "Job Funded"}
-          </DialogTitle>
-          <DialogDescription>
-            {step === "details"
-              ? "Tell Veyra what result you need. The technical details are prepared automatically from GitHub."
-              : step === "review"
-                ? "Confirm what the worker must deliver and what the verifier will check."
-                : step === "funding"
-                  ? "Complete the Circle confirmations to secure the job budget."
-                  : "The job terms and escrow funding are confirmed on Arc Testnet."}
-          </DialogDescription>
-        </DialogHeader>
+  // On a page the document scrolls; only the modal needs an inner scroll area
+  // sized against the viewport, and only the modal needs a sticky footer.
+  const scrollArea = asPage ? "" : "max-h-[calc(94vh-176px)] overflow-y-auto";
+  const reviewScrollArea = asPage ? "" : "max-h-[calc(94vh-96px)] overflow-y-auto";
+  const actionBar = asPage
+    ? "mt-5 flex flex-col-reverse items-stretch gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between"
+    : "sticky bottom-0 flex flex-col-reverse items-stretch gap-3 border-t bg-background/95 px-6 py-4 backdrop-blur sm:flex-row sm:items-center sm:justify-between";
+  const reviewActionBar = asPage
+    ? "mt-5 flex flex-col-reverse justify-end gap-3 border-t pt-4 sm:flex-row"
+    : "sticky bottom-0 flex flex-col-reverse justify-end gap-3 border-t bg-background/95 px-6 py-4 backdrop-blur sm:flex-row";
+  const bodyPadding = asPage ? "space-y-5" : "space-y-5 p-6";
 
-        {step === "details" ? (
-          <div className="max-h-[calc(94vh-96px)] overflow-y-auto">
-            <div className="space-y-5 p-6">
+  return (
+    <BuilderShell
+      asPage={asPage}
+      open={open}
+      onOpenChange={onOpenChange}
+      locked={loading}
+    >
+      <BuilderHeader
+        asPage={asPage}
+        title={
+          isFormStep(step)
+            ? STEP_COPY[step].title(Boolean(draft))
+            : step === "funding"
+              ? "Fund Job"
+              : "Job Funded"
+        }
+        description={
+          isFormStep(step)
+            ? STEP_COPY[step].description
+            : step === "funding"
+              ? "Complete the Circle confirmations to secure the job budget."
+              : "The job terms and escrow funding are confirmed on Arc Testnet."
+        }
+      >
+          {/* The stepper reports position only. Steps are gated by validation,
+              so they are not clickable shortcuts. */}
+          {isFormStep(step) ? (
+            <ol className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-2" aria-label="Job builder progress">
+              {FORM_STEPS.map((formStep, index) => {
+                const done = index < currentFormIndex;
+                const active = index === currentFormIndex;
+                return (
+                  <li key={formStep.key} className="flex items-center gap-2">
+                    <span
+                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
+                        done
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : active
+                            ? "border-primary text-primary"
+                            : "border-border text-muted-foreground"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {done ? <Check className="h-3 w-3" /> : formStep.number}
+                    </span>
+                    <span
+                      className={`text-xs font-medium ${active ? "text-foreground" : "text-muted-foreground"}`}
+                      aria-current={active ? "step" : undefined}
+                    >
+                      {formStep.label}
+                    </span>
+                    {index < FORM_STEPS.length - 1 ? (
+                      <span className="hidden h-px w-6 bg-border sm:block" aria-hidden="true" />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ol>
+          ) : null}
+      </BuilderHeader>
+
+        {isFormStep(step) && step !== "review" ? (
+          <div className={scrollArea}>
+            <div className={bodyPadding}>
+              {step === "task" ? (
+                <>
               <section className="rounded-xl border bg-card p-5 shadow-sm">
                 <div className="flex items-center gap-2">
                   <Github className="h-4 w-4" />
-                  <h3 className="font-semibold">1. GitHub task</h3>
+                  <h3 className="font-semibold">GitHub task</h3>
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Choose an approved repository and select one of its open GitHub issues.
-                  Veyra will prepare the technical details automatically.
-                </p>
 
                 <div className="mt-4">
                   <GitHubAppConnection
@@ -899,14 +1189,9 @@ export function CreateJobDialog({
                         ))}
                       </select>
 
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <p className="text-xs text-muted-foreground">
-                          {issuesLoading
-                            ? "Checking GitHub…"
-                            : `${filteredRepositoryIssues.length} open issue${
-                                filteredRepositoryIssues.length === 1 ? "" : "s"
-                              } shown`}
-                        </p>
+                      {/* The dropdown already shows how many issues there are;
+                          a line of prose restating the count is noise. */}
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                         <div className="flex flex-wrap gap-2">
                           <Button
                             type="button"
@@ -1001,7 +1286,7 @@ export function CreateJobDialog({
                           size="sm"
                           onClick={() => setAdvancedOpen(true)}
                         >
-                          Review command
+                          Confirm in Requirements
                         </Button>
                       )}
                     </div>
@@ -1010,11 +1295,7 @@ export function CreateJobDialog({
               </section>
 
               <section className="rounded-xl border bg-card p-5 shadow-sm">
-                <h3 className="font-semibold">2. What needs to be done?</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Keep this clear and outcome-focused. Veyra fills it from the
-                  issue, and you can correct it before publishing.
-                </p>
+                <h3 className="font-semibold">Task</h3>
 
                 <div className="mt-4 grid gap-4">
                   <div className="grid gap-2">
@@ -1027,7 +1308,7 @@ export function CreateJobDialog({
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="job-description">Job description</Label>
+                    <Label htmlFor="job-description">Short description</Label>
                     <Textarea
                       id="job-description"
                       rows={4}
@@ -1038,15 +1319,14 @@ export function CreateJobDialog({
                   </div>
                 </div>
               </section>
+                </>
+              ) : null}
 
+              {step === "requirements" ? (
               <section className="rounded-xl border bg-card p-5 shadow-sm">
                 <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
                   <div>
-                    <h3 className="font-semibold">3. What must be completed?</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Each item should be a result the verifier can clearly
-                      mark as passed or failed.
-                    </p>
+                    <h3 className="font-semibold">Acceptance criteria</h3>
                   </div>
                   <Button
                     variant="outline"
@@ -1064,17 +1344,14 @@ export function CreateJobDialog({
                 </div>
 
                 <div className="mt-4 space-y-3">
+                  {/* Simple rows: one input each, no bordered tile per item. */}
                   {criteriaRows.map((criterion, index) => (
-                    <div
-                      key={criterion.id}
-                      className="flex items-start gap-3 rounded-lg border bg-muted/10 p-3"
-                    >
-                      <div className="mt-2 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs text-muted-foreground">
+                    <div key={criterion.id} className="flex items-center gap-2">
+                      <span className="w-4 shrink-0 text-xs text-muted-foreground">
                         {index + 1}
-                      </div>
-                      <Textarea
-                        aria-label={`Completion requirement ${index + 1}`}
-                        rows={2}
+                      </span>
+                      <Input
+                        aria-label={`Acceptance criterion ${index + 1}`}
                         value={criterion.text}
                         onChange={(event) =>
                           updateCriterion(index, event.target.value)
@@ -1098,17 +1375,148 @@ export function CreateJobDialog({
                   ))}
                 </div>
               </section>
+              ) : null}
 
+              {step === "requirements" ? (
+                <section className="rounded-xl border bg-card p-5 shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4" />
+                    <h3 className="font-semibold">Verification requirements</h3>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Veyra validation and independent verification are always required.
+                    You decide whether GitHub CI is also a payment condition.
+                  </p>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg border bg-muted/20 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium">Veyra verification</span>
+                        <Badge variant="outline">Required</Badge>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        Funded validation commands and an independent Veyra verifier
+                        must pass before settlement.
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border p-4">
+                      <div className="flex items-center gap-2">
+                        <Github className="h-4 w-4" />
+                        <span className="font-medium">GitHub CI checks</span>
+                      </div>
+                      <div className="mt-3 grid gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRequireGithubChecks(false);
+                            setCiPreflight(null);
+                          }}
+                          className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                            !requireGithubChecks
+                              ? "border-primary bg-primary/5"
+                              : "hover:bg-muted/40"
+                          }`}
+                        >
+                          <span className="font-medium">Not required</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">
+                            GitHub checks remain useful evidence, but they do not block payment.
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRequireGithubChecks(true);
+                            setCiPreflight(null);
+                          }}
+                          className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                            requireGithubChecks
+                              ? "border-primary bg-primary/5"
+                              : "hover:bg-muted/40"
+                          }`}
+                        >
+                          <span className="font-medium">Required before payment</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">
+                            The exact submitted commit must also have successful GitHub Check Runs.
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {requireGithubChecks ? (
+                    <div
+                      className={`mt-4 rounded-lg border p-4 text-sm ${
+                        ciPreflight?.ready
+                          ? "border-primary/30 bg-primary/5"
+                          : "border-amber-300 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/20"
+                      }`}
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="font-medium">GitHub CI readiness</p>
+                          <p className="mt-1 text-muted-foreground">
+                            {ciPreflightLoading
+                              ? "Veyra is checking this repository…"
+                              : ciPreflight?.message ??
+                                "Veyra must confirm CI before this requirement can be funded."}
+                          </p>
+                          {ciPreflight?.automatic_workflows.length ? (
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              Automatic workflows: {ciPreflight.automatic_workflows.join(", ")}
+                            </p>
+                          ) : null}
+                          {!ciPreflight?.automatic_workflows.length &&
+                          ciPreflight?.recent_check_runs.length ? (
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              Check providers detected: {Array.from(
+                                new Set(
+                                  ciPreflight.recent_check_runs
+                                    .map((item) => item.app || item.name)
+                                    .filter(Boolean),
+                                ),
+                              ).join(", ")}
+                            </p>
+                          ) : null}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={
+                            ciPreflightLoading ||
+                            !selectedRepositoryId ||
+                            !preview?.target_branch
+                          }
+                          onClick={() => {
+                            if (selectedRepositoryId && preview?.target_branch) {
+                              void runCiPreflight(
+                                selectedRepositoryId,
+                                preview.target_branch,
+                                true,
+                              );
+                            }
+                          }}
+                        >
+                          {ciPreflightLoading ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : null}
+                          Recheck CI
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
+              {step === "budget" ? (
+                <>
               <section className="rounded-xl border bg-card p-5 shadow-sm">
-                <h3 className="font-semibold">4. Payment and deadline</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Payment is secured in USDC on Arc Testnet and released only
-                  after independent verification.
-                </p>
+                <h3 className="font-semibold">Reward and deadline</h3>
 
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2">
-                    <Label htmlFor="budget">Budget</Label>
+                    <Label htmlFor="budget">Reward</Label>
                     <div className="relative">
                       <Input
                         id="budget"
@@ -1135,23 +1543,25 @@ export function CreateJobDialog({
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-lg border bg-muted/20 p-4 text-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Wallet balance</span>
-                    <span className="font-medium">
-                      {walletBalance === null ? "Checking…" : `${walletBalance} USDC`}
+                {/* One funding line: balance, wallet, and only when it matters,
+                    the shortfall. */}
+                <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border bg-muted/20 px-4 py-2.5 text-sm">
+                  <span className="text-muted-foreground">
+                    Balance{" "}
+                    <span className="font-medium text-foreground">
+                      {walletBalance === null ? "…" : `${walletBalance} USDC`}
                     </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Wallet</span>
-                    <span className="font-medium">
+                  </span>
+                  <span className="text-muted-foreground">
+                    Wallet{" "}
+                    <span className="font-medium text-foreground">
                       {compactAddress(me?.wallet?.address)}
                     </span>
-                  </div>
+                  </span>
                   {amountMissing !== null && amountMissing > 0 ? (
-                    <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-                      You need {amountMissing.toFixed(2)} more USDC to fund this job.
-                    </p>
+                    <span className="text-amber-700 dark:text-amber-300">
+                      {amountMissing.toFixed(2)} USDC short
+                    </span>
                   ) : null}
                 </div>
               </section>
@@ -1159,7 +1569,7 @@ export function CreateJobDialog({
               <section className="rounded-xl border bg-card p-5 shadow-sm">
                 <div className="flex items-center gap-2">
                   <Users className="h-4 w-4" />
-                  <h3 className="font-semibold">5. Who can work on this job?</h3>
+                  <h3 className="font-semibold">Who can work on this job?</h3>
                 </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -1225,7 +1635,10 @@ export function CreateJobDialog({
                   </div>
                 ) : null}
               </section>
+                </>
+              ) : null}
 
+              {step === "requirements" ? (
               <details
                 className="group rounded-xl border bg-card shadow-sm"
                 open={advancedOpen}
@@ -1233,11 +1646,7 @@ export function CreateJobDialog({
               >
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-5">
                   <div>
-                    <h3 className="font-semibold">Advanced job settings</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Veyra prepared these from the repository. Change them only
-                      when the issue requires something different.
-                    </p>
+                    <h3 className="font-semibold">Advanced requirements</h3>
                   </div>
                   <ChevronDown className="h-5 w-5 transition-transform group-open:rotate-180" />
                 </summary>
@@ -1453,6 +1862,7 @@ export function CreateJobDialog({
                   </div>
                 </div>
               </details>
+              ) : null}
 
               {error ? (
                 <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
@@ -1461,25 +1871,41 @@ export function CreateJobDialog({
               ) : null}
             </div>
 
-            <div className="sticky bottom-0 flex flex-col-reverse justify-end gap-3 border-t bg-background/95 px-6 py-4 backdrop-blur sm:flex-row">
+            <div className={actionBar}>
               <Button
-                variant="outline"
-                onClick={() => void saveDraft()}
-                disabled={loading}
+                variant="ghost"
+                onClick={backForm}
+                disabled={loading || step === "task"}
+                className="sm:mr-auto"
               >
-                Save Draft
+                <ChevronLeft className="h-4 w-4" />
+                Back
               </Button>
-              <Button onClick={() => void reviewJob()} disabled={loading}>
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                Review Job
-              </Button>
+              <div className="flex flex-col-reverse gap-3 sm:flex-row">
+                <Button
+                  variant="outline"
+                  onClick={() => void saveDraft()}
+                  disabled={loading}
+                >
+                  Save Draft
+                </Button>
+                <Button onClick={() => void continueForm()} disabled={loading}>
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {step === "budget" ? "Review Job" : "Continue"}
+                  {step === "budget" ? null : <ChevronRight className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
           </div>
         ) : null}
 
         {step === "review" && draft ? (
-          <div className="max-h-[calc(94vh-96px)] overflow-y-auto">
-            <div className="grid gap-5 p-6 lg:grid-cols-[minmax(0,1fr)_290px]">
+          <div className={reviewScrollArea}>
+            <div
+              className={`grid gap-5 lg:grid-cols-[minmax(0,1fr)_290px] ${
+                asPage ? "" : "p-6"
+              }`}
+            >
               <div className="space-y-5">
                 <section className="rounded-xl border p-5">
                   <div className="flex items-start justify-between gap-4">
@@ -1526,6 +1952,21 @@ export function CreateJobDialog({
                       <p className="mt-2 whitespace-pre-line font-mono text-xs">
                         {newlineList(requiredCommands).join("\n")}
                       </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Independent Veyra verifier</p>
+                      <p className="mt-2 font-medium">Required</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">GitHub CI checks</p>
+                      <p className="mt-2 font-medium">
+                        {requireGithubChecks ? "Required" : "Not required"}
+                      </p>
+                      {requireGithubChecks && ciPreflight?.ready ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          CI readiness confirmed for {draft.target_branch}.
+                        </p>
+                      ) : null}
                     </div>
                     <div>
                       <p className="text-muted-foreground">Files the worker may change</p>
@@ -1593,6 +2034,7 @@ export function CreateJobDialog({
                       "Completion requirements provided",
                       "Worker skills identified",
                       "Verification command provided",
+                      ...(requireGithubChecks ? ["GitHub CI readiness confirmed"] : []),
                       "Deadline and budget confirmed",
                     ].map((label) => (
                       <div
@@ -1620,14 +2062,19 @@ export function CreateJobDialog({
             </div>
 
             {error ? (
-              <p className="mx-6 mb-5 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              <p
+                className={`mb-5 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive ${
+                  asPage ? "mt-5" : "mx-6"
+                }`}
+              >
                 {error}
               </p>
             ) : null}
 
-            <div className="sticky bottom-0 flex flex-col-reverse justify-end gap-3 border-t bg-background/95 px-6 py-4 backdrop-blur sm:flex-row">
+            <div className={reviewActionBar}>
               {editable ? (
-                <Button variant="outline" onClick={() => setStep("details")}>
+                <Button variant="outline" onClick={backForm}>
+                  <ChevronLeft className="h-4 w-4" />
                   Back to Edit
                 </Button>
               ) : null}
@@ -1679,7 +2126,6 @@ export function CreateJobDialog({
             <Button onClick={() => void close()}>Back to Jobs</Button>
           </div>
         ) : null}
-      </DialogContent>
-    </Dialog>
+    </BuilderShell>
   );
 }

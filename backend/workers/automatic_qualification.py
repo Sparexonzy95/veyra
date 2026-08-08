@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import ast
 import base64
 import hashlib
 import json
+import re
 import secrets
 from datetime import timedelta
 from typing import Any
@@ -23,13 +23,23 @@ from workers.models import (
 )
 
 
-TASK_VERSION = "python-health-v1"
 LEASE_SALT = "veyra.automatic-qualification.lease.v1"
-STARTER_APP = '''def health_response():
-    # Return the Veyra qualification health payload.
-    raise NotImplementedError("Complete the automatic qualification task")
-'''
-VISIBLE_TEST = '''from app import health_response
+QUALIFICATION_SPECS: dict[str, dict[str, Any]] = {
+    "python": {
+        "version": "python-health-v2",
+        "title": "Veyra automatic Python qualification",
+        "target_path": "src/service.py",
+        "starter": '''def health_response():
+    raise NotImplementedError("Complete the controlled qualification task")
+''',
+        "expected": '''def health_response():
+    return {"status": "ok", "service": "veyra-qualification", "version": 1}
+''',
+        "support_files": [
+            {"path": "src/__init__.py", "content": ""},
+            {
+                "path": "tests/test_visible.py",
+                "content": '''from src.service import health_response
 
 
 def test_health_response():
@@ -38,20 +48,174 @@ def test_health_response():
         "service": "veyra-qualification",
         "version": 1,
     }
-'''
-TASK_INSTRUCTIONS = '''Complete app.py so health_response() returns exactly:
-{"status": "ok", "service": "veyra-qualification", "version": 1}
+''',
+            },
+        ],
+        "test_command": "python -m pytest -q",
+    },
+    "javascript": {
+        "version": "javascript-health-v1",
+        "title": "Veyra automatic JavaScript qualification",
+        "target_path": "src/index.js",
+        "starter": '''function healthResponse() {
+  throw new Error("Complete the controlled qualification task");
+}
 
-Rules:
-- Change only app.py.
-- Do not add imports, network calls, file access, subprocesses, or dependencies.
-- Keep the function name and zero-argument signature unchanged.
-- Run python -m pytest -q before submitting.
-'''
-EXPECTED_PAYLOAD = {
-    "status": "ok",
-    "service": "veyra-qualification",
-    "version": 1,
+module.exports = { healthResponse };
+''',
+        "expected": '''function healthResponse() {
+  return { status: "ok", service: "veyra-qualification", version: 1 };
+}
+
+module.exports = { healthResponse };
+''',
+        "support_files": [
+            {
+                "path": "tests/health.test.js",
+                "content": '''const assert = require("node:assert/strict");
+const test = require("node:test");
+const { healthResponse } = require("../src/index.js");
+
+test("returns the qualification payload", () => {
+  assert.deepEqual(healthResponse(), {
+    status: "ok",
+    service: "veyra-qualification",
+    version: 1,
+  });
+});
+''',
+            },
+        ],
+        "test_command": "node --test tests/health.test.js",
+    },
+    "rust": {
+        "version": "rust-health-v1",
+        "title": "Veyra automatic Rust qualification",
+        "target_path": "src/lib.rs",
+        "starter": '''pub fn health_response() -> &'static str {
+    todo!("Complete the controlled qualification task")
+}
+''',
+        "expected": '''pub fn health_response() -> &'static str {
+    "ok:veyra-qualification:1"
+}
+''',
+        "support_files": [
+            {
+                "path": "Cargo.toml",
+                "content": '''[package]
+name = "veyra-qualification"
+version = "0.1.0"
+edition = "2021"
+''',
+            },
+            {
+                "path": "tests/health.rs",
+                "content": '''use veyra_qualification::health_response;
+
+#[test]
+fn returns_the_qualification_payload() {
+    assert_eq!(health_response(), "ok:veyra-qualification:1");
+}
+''',
+            },
+        ],
+        "test_command": "cargo test --quiet",
+    },
+    "go": {
+        "version": "go-health-v1",
+        "title": "Veyra automatic Go qualification",
+        "target_path": "cmd/api/main.go",
+        "starter": '''package main
+
+func healthResponse() string {
+	panic("complete the controlled qualification task")
+}
+''',
+        "expected": '''package main
+
+func healthResponse() string {
+	return "ok:veyra-qualification:1"
+}
+''',
+        "support_files": [
+            {"path": "go.mod", "content": "module veyra-qualification\n\ngo 1.22\n"},
+            {
+                "path": "cmd/api/main_test.go",
+                "content": '''package main
+
+import "testing"
+
+func TestHealthResponse(t *testing.T) {
+	if healthResponse() != "ok:veyra-qualification:1" {
+		t.Fatal("unexpected qualification payload")
+	}
+}
+''',
+            },
+        ],
+        "test_command": "go test ./...",
+    },
+    "solidity": {
+        "version": "solidity-foundry-health-v1",
+        "title": "Veyra automatic Solidity qualification",
+        "target_path": "src/Example.sol",
+        "starter": '''// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Example {
+    function healthResponse() external pure returns (string memory) {
+        revert("Complete the controlled qualification task");
+    }
+}
+''',
+        "expected": '''// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Example {
+    function healthResponse() external pure returns (string memory) {
+        return "ok:veyra-qualification:1";
+    }
+}
+''',
+        "support_files": [
+            {"path": "foundry.toml", "content": "[profile.default]\nsrc = 'src'\ntest = 'test'\n"},
+            {
+                "path": "test/Example.t.sol",
+                "content": '''// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {Example} from "../src/Example.sol";
+
+contract ExampleTest {
+    function testHealthResponse() public {
+        Example example = new Example();
+        require(
+            keccak256(bytes(example.healthResponse())) ==
+                keccak256(bytes("ok:veyra-qualification:1")),
+            "unexpected qualification payload"
+        );
+    }
+}
+''',
+            },
+        ],
+        "test_command": "forge test --quiet",
+    },
+}
+
+QUALIFICATION_LANGUAGE_ALIASES = {
+    "python": "python",
+    "javascript": "javascript",
+    "typescript": "javascript",
+    "node": "javascript",
+    "nodejs": "javascript",
+    "rust": "rust",
+    "go": "go",
+    "golang": "go",
+    "solidity": "solidity",
+    "foundry": "solidity",
+    "hardhat": "solidity",
 }
 
 
@@ -91,22 +255,75 @@ def _b64url_decode(value: str) -> bytes:
         ) from exc
 
 
-def _canonical_files(files: list[dict[str, str]]) -> tuple[list[dict[str, str]], str]:
+def _controlled_path(value: Any) -> str:
+    path = str(value or "").strip().replace("\\", "/")
+    if (
+        not path
+        or "\x00" in path
+        or path.startswith("/")
+        or re.match(r"^[A-Za-z]:", path)
+    ):
+        raise AutomaticQualificationError("The qualification target path is unsafe.")
+    parts = [part for part in path.split("/") if part not in {"", "."}]
+    if not parts or ".." in parts:
+        raise AutomaticQualificationError("The qualification target path is unsafe.")
+    normalized = "/".join(parts)
+    lower_parts = [part.casefold() for part in parts]
+    basename = lower_parts[-1]
+    if (
+        basename == ".env"
+        or basename.startswith(".env.")
+        or ".git" in lower_parts
+        or lower_parts[:2] == [".github", "workflows"]
+    ):
+        raise AutomaticQualificationError("The qualification target path is protected.")
+    return normalized
+
+
+def _qualification_spec_for_worker(worker: WorkerAgent) -> dict[str, Any]:
+    declared = [*list(worker.languages or []), *list(worker.skills or [])]
+    for value in declared:
+        key = re.sub(r"[^a-z0-9]+", "", str(value).casefold())
+        spec_name = QUALIFICATION_LANGUAGE_ALIASES.get(key)
+        if spec_name:
+            return QUALIFICATION_SPECS[spec_name]
+    raise AutomaticQualificationError(
+        "No controlled qualification is configured for this agent's declared languages."
+    )
+
+
+def _qualification_spec_for_run(run: WorkerQualificationRun) -> dict[str, Any]:
+    for spec in QUALIFICATION_SPECS.values():
+        if spec["version"] == run.task_version:
+            return spec
+    raise AutomaticQualificationError("The qualification task version is unsupported.")
+
+
+def _canonical_files(
+    files: list[dict[str, str]],
+    *,
+    target_path: str,
+) -> tuple[list[dict[str, str]], str]:
+    controlled_target = _controlled_path(target_path)
     cleaned: list[dict[str, str]] = []
     seen: set[str] = set()
     for item in files:
         if not isinstance(item, dict):
             raise AutomaticQualificationError("The qualification result contains an invalid file.")
-        path = str(item.get("path") or "").replace("\\", "/").strip().lstrip("/")
+        path = _controlled_path(item.get("path"))
         content = str(item.get("content") or "")
-        if path != "app.py" or path in seen:
-            raise AutomaticQualificationError("Qualification may submit only app.py.")
+        if path != controlled_target or path.casefold() in seen:
+            raise AutomaticQualificationError(
+                f"Qualification may submit only {controlled_target}."
+            )
         if len(content.encode("utf-8")) > 20_000:
             raise AutomaticQualificationError("The submitted qualification file is too large.")
-        seen.add(path)
+        seen.add(path.casefold())
         cleaned.append({"path": path, "content": content})
-    if [item["path"] for item in cleaned] != ["app.py"]:
-        raise AutomaticQualificationError("The qualification result must include app.py only.")
+    if [item["path"] for item in cleaned] != [controlled_target]:
+        raise AutomaticQualificationError(
+            f"The qualification result must include {controlled_target} only."
+        )
     canonical = json.dumps(cleaned, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return cleaned, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -143,76 +360,13 @@ def _verify_runtime_signature(
         ) from exc
 
 
-def _verify_solution_source(source: str) -> None:
-    try:
-        tree = ast.parse(source, filename="app.py", mode="exec")
-    except SyntaxError as exc:
-        raise AutomaticQualificationError(
-            "The qualification solution contains invalid Python syntax."
-        ) from exc
+def _verify_controlled_solution(source: str, *, expected: str) -> None:
+    def normalized(value: str) -> str:
+        return "\n".join(line.rstrip() for line in value.replace("\r\n", "\n").strip().split("\n"))
 
-    forbidden = (
-        ast.Import,
-        ast.ImportFrom,
-        ast.ClassDef,
-        ast.AsyncFunctionDef,
-        ast.Lambda,
-        ast.With,
-        ast.AsyncWith,
-        ast.Try,
-        ast.Raise,
-        ast.Global,
-        ast.Nonlocal,
-        ast.Call,
-        ast.Attribute,
-        ast.Subscript,
-        ast.ListComp,
-        ast.SetComp,
-        ast.DictComp,
-        ast.GeneratorExp,
-    )
-    if any(isinstance(node, forbidden) for node in ast.walk(tree)):
+    if normalized(source) != normalized(expected):
         raise AutomaticQualificationError(
-            "The qualification solution uses code outside the permitted safe subset."
-        )
-
-    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
-    other_nodes = [
-        node
-        for node in tree.body
-        if not isinstance(node, (ast.FunctionDef, ast.Expr))
-    ]
-    if other_nodes or len(functions) != 1 or functions[0].name != "health_response":
-        raise AutomaticQualificationError(
-            "The solution must contain only health_response()."
-        )
-
-    function = functions[0]
-    if function.args.args or function.args.vararg or function.args.kwarg:
-        raise AutomaticQualificationError("health_response() must accept no arguments.")
-
-    statements = list(function.body)
-    if statements and isinstance(statements[0], ast.Expr):
-        value = statements[0].value
-        if isinstance(value, ast.Constant) and isinstance(value.value, str):
-            statements = statements[1:]
-    if len(statements) != 1 or not isinstance(statements[0], ast.Return):
-        raise AutomaticQualificationError(
-            "health_response() must contain one return statement."
-        )
-
-    returned = statements[0].value
-    if not isinstance(returned, ast.Dict):
-        raise AutomaticQualificationError("health_response() must return a dictionary.")
-    try:
-        payload = ast.literal_eval(returned)
-    except Exception as exc:
-        raise AutomaticQualificationError(
-            "The returned health payload must use literal values."
-        ) from exc
-    if payload != EXPECTED_PAYLOAD:
-        raise AutomaticQualificationError(
-            "The returned health payload does not match the required result."
+            "The qualification solution does not match the controlled expected result."
         )
 
 
@@ -290,10 +444,11 @@ def ensure_automatic_qualification(worker: WorkerAgent) -> WorkerQualificationRu
         )
         return None
 
+    spec = _qualification_spec_for_worker(worker)
     run = WorkerQualificationRun.objects.create(
         worker=worker,
         attempt_number=attempts + 1,
-        task_version=TASK_VERSION,
+        task_version=str(spec["version"]),
         status=WorkerQualificationRun.Status.QUEUED,
     )
     worker.status = WorkerAgent.Status.TESTING
@@ -350,6 +505,14 @@ def qualification_task_for_connection(
             ]
         )
 
+    spec = _qualification_spec_for_run(run)
+    target_path = _controlled_path(spec["target_path"])
+    expected = str(spec["expected"])
+    instructions = (
+        f"Replace only {target_path} with the exact controlled source below. "
+        "Do not add imports, dependencies, network calls, file access, or subprocesses. "
+        f"Run {spec['test_command']} before submitting.\n\n{expected}"
+    )
     api_root = str(
         getattr(settings, "VEYRA_PUBLIC_API_URL", "http://127.0.0.1:8000")
     ).rstrip("/")
@@ -358,14 +521,15 @@ def qualification_task_for_connection(
         "type": "automatic_qualification",
         "attempt": run.attempt_number,
         "task_version": run.task_version,
-        "title": "Veyra automatic Python qualification",
-        "instructions": TASK_INSTRUCTIONS,
+        "title": str(spec["title"]),
+        "instructions": instructions,
+        "qualification_target_path": target_path,
         "starter_files": [
-            {"path": "app.py", "content": STARTER_APP},
-            {"path": "tests/test_visible.py", "content": VISIBLE_TEST},
+            {"path": target_path, "content": str(spec["starter"])},
+            *list(spec["support_files"]),
         ],
-        "allowed_submission_paths": ["app.py"],
-        "test_command": "python -m pytest -q",
+        "allowed_submission_paths": [target_path],
+        "test_command": str(spec["test_command"]),
         "lease_token": _lease_token(run),
         "submit_url": f"{api_root}/api/v1/agent-runtime/qualification/submit/",
     }
@@ -455,7 +619,11 @@ def submit_automatic_qualification(
         files_value = payload.get("files")
         if not isinstance(files_value, list):
             raise AutomaticQualificationError("Qualification files must be a list.")
-        files, files_hash = _canonical_files(files_value)
+        spec = _qualification_spec_for_run(run)
+        files, files_hash = _canonical_files(
+            files_value,
+            target_path=str(spec["target_path"]),
+        )
         try:
             test_return_code = int(payload.get("test_return_code"))
         except (TypeError, ValueError) as exc:
@@ -504,7 +672,10 @@ def submit_automatic_qualification(
             return run, False
 
         try:
-            _verify_solution_source(files[0]["content"])
+            _verify_controlled_solution(
+                files[0]["content"],
+                expected=str(spec["expected"]),
+            )
         except AutomaticQualificationError as exc:
             _mark_failed(run, message=str(exc), runtime_metadata=metadata)
             return run, False

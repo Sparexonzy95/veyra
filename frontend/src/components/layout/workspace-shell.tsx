@@ -46,14 +46,20 @@ export function WorkspaceShell({
   return (
     <SidebarProvider>
       <AppSidebar workspace={workspace} />
-      <SidebarInset>
+      {/* veyra-scope maps the shadcn tokens onto the Veyra palette for the
+          whole authenticated surface, so client and agent pages inherit the
+          same background, borders and text colours without per-page overrides. */}
+      {/* The inset is the flex column, not a nested div. Previously a
+          `min-h-screen` wrapper sat *after* the sticky header, so the column
+          measured a full viewport on top of the header height and the footer
+          was pushed permanently below the fold. The inset already fills the
+          viewport, so main simply grows and the footer follows it. */}
+      <SidebarInset className="veyra-scope dashboard-shell flex min-h-svh flex-col">
         <Header workspace={workspace} />
-        <div className="dashboard-shell flex min-h-screen flex-col">
-          <main className="mx-auto w-full max-w-[1440px] flex-1 space-y-4 px-4 py-6 sm:px-6 md:px-8 md:py-8">
-            {children}
-          </main>
-          <Footer />
-        </div>
+        <main className="mx-auto w-full max-w-[1280px] flex-1 space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+          {children}
+        </main>
+        <Footer />
       </SidebarInset>
     </SidebarProvider>
   );

@@ -1,15 +1,96 @@
 "use client";
 
 import { useOwnedAgents } from "@/components/agents/use-owned-agents";
-import { Card, CardContent } from "@/components/ui/card";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { Panel, PanelBody } from "@/components/dashboard/panel";
+import {
+  DashboardPagination,
+  PAGE_SIZE,
+  pageCount,
+  usePageParam,
+} from "@/components/dashboard/pagination";
+import { EmptyState } from "@/components/dashboard/states";
+import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Trophy } from "lucide-react";
+import { useRef } from "react";
 
 export default function ReputationPage() {
   const { agents } = useOwnedAgents();
+
+  // Reputation is read from the shared owned-agents payload, so the slice is
+  // local rather than a second paged request for the same records.
+  const { page, setPage } = usePageParam();
+  const totalPages = pageCount(agents.length, PAGE_SIZE.cards);
+  const visible = agents.slice(
+    (page - 1) * PAGE_SIZE.cards,
+    page * PAGE_SIZE.cards,
+  );
+  const gridRef = useRef<HTMLDivElement | null>(null);
+
   return (
-    <div className="space-y-6">
-      <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Agent Owner workspace</p><h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Reputation</h1><p className="mt-1.5 text-sm text-muted-foreground">Verified delivery history for each owned agent.</p></div>
-      <div className="grid gap-4 md:grid-cols-2">{agents.length ? agents.map((agent) => <Card key={agent.id}><CardContent className="space-y-4 p-5"><div className="flex items-center justify-between"><div><p className="font-semibold">{agent.name}</p><p className="text-sm text-muted-foreground">{agent.status === "ACTIVE" ? "Active" : "Needs attention"}</p></div><div className="flex items-center gap-2 text-xl font-bold"><Trophy className="h-5 w-5 text-primary" />{agent.execution.reputation.karma_score}</div></div><div className="grid grid-cols-3 gap-3 text-center text-sm"><div className="rounded-lg border p-3"><p className="font-semibold">{agent.execution.reputation.completed_jobs}</p><p className="text-xs text-muted-foreground">Completed</p></div><div className="rounded-lg border p-3"><p className="font-semibold">{agent.execution.reputation.failed_jobs}</p><p className="text-xs text-muted-foreground">Failed</p></div><div className="rounded-lg border p-3"><p className="font-semibold">{agent.execution.reputation.abandoned_jobs}</p><p className="text-xs text-muted-foreground">Abandoned</p></div></div></CardContent></Card>) : <Card><CardContent className="p-6 text-sm text-muted-foreground">Connect an agent to begin building reputation.</CardContent></Card>}</div>
-    </div>
+    <>
+      <PageHeader
+        title="Reputation"
+        description="Verified delivery history for each agent."
+      />
+
+      {agents.length ? (
+        <div ref={gridRef} className="space-y-4">
+          <div className="grid items-stretch gap-4 md:grid-cols-2">
+            {visible.map((agent) => (
+              <Panel key={agent.id}>
+                <PanelBody className="space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{agent.name}</p>
+                      <div className="mt-1.5">
+                        <StatusBadge status={agent.status} />
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Trophy className="h-4 w-4 text-muted-foreground" aria-hidden />
+                      <span className="text-lg font-semibold tabular-nums">
+                        {agent.execution.reputation.karma_score}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    {[
+                      { label: "Completed", value: agent.execution.reputation.completed_jobs },
+                      { label: "Failed", value: agent.execution.reputation.failed_jobs },
+                      { label: "Abandoned", value: agent.execution.reputation.abandoned_jobs },
+                    ].map((stat) => (
+                      <div
+                        key={stat.label}
+                        className="rounded-md border border-border bg-muted/20 p-2.5"
+                      >
+                        <p className="text-base font-semibold tabular-nums">{stat.value}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{stat.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                </PanelBody>
+              </Panel>
+            ))}
+          </div>
+          <DashboardPagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={agents.length}
+            onPageChange={setPage}
+            scrollTargetRef={gridRef}
+            className="rounded-lg border border-border bg-card"
+          />
+        </div>
+      ) : (
+        <Panel>
+          <EmptyState
+            icon={Trophy}
+            title="No reputation yet"
+            description="Connect an agent to begin building reputation."
+          />
+        </Panel>
+      )}
+    </>
   );
 }

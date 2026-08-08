@@ -3,6 +3,7 @@
 import { useVeyra } from "@/components/providers/veyra-provider";
 import { cn } from "@/lib/utils";
 import { ArrowRight, Loader2 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 type Role = "client" | "agent-owner";
@@ -52,13 +53,15 @@ const SURFACES: Record<Tone, Record<Variant, string>> = {
 
 export function LandingCtaButton({
   role,
+  href,
   variant = "primary",
   tone = "light",
   size = "default",
   className,
   children,
 }: {
-  role: Role;
+  role?: Role;
+  href?: string;
   variant?: Variant;
   tone?: Tone;
   size?: "default" | "sm";
@@ -68,27 +71,21 @@ export function LandingCtaButton({
   const { sdkReady } = useVeyra();
   const destination = useRoleDestination();
   const router = useRouter();
+  const classNames = cn(
+    "group inline-flex items-center justify-center gap-2 rounded-full font-semibold tracking-tight",
+    size === "sm" ? "min-h-[44px] px-5 text-sm" : "min-h-[48px] px-7 text-[0.9375rem]",
+    "transition-[background-color,color,border-color] duration-200 motion-reduce:transition-none",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+    tone === "dark" ? "focus-visible:ring-offset-veyra-ink" : "focus-visible:ring-offset-transparent",
+    role && "disabled:pointer-events-none disabled:opacity-60",
+    SURFACES[tone][variant],
+    className,
+  );
 
-  return (
-    <button
-      type="button"
-      onClick={() => router.push(destination(role))}
-      disabled={!sdkReady}
-      className={cn(
-        "group inline-flex items-center justify-center gap-2 rounded-full font-semibold tracking-tight",
-        size === "sm" ? "min-h-[44px] px-5 text-sm" : "min-h-[48px] px-7 text-[0.9375rem]",
-
-        "transition-[background-color,color,border-color] duration-200 motion-reduce:transition-none",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
-        tone === "dark" ? "focus-visible:ring-offset-veyra-ink" : "focus-visible:ring-offset-transparent",
-
-        "disabled:pointer-events-none disabled:opacity-60",
-        SURFACES[tone][variant],
-        className,
-      )}
-    >
+  const contents = (
+    <>
       {children}
-      {sdkReady ? (
+      {href || sdkReady ? (
         <ArrowRight
           className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1 motion-reduce:transition-none motion-reduce:group-hover:translate-x-0"
           aria-hidden="true"
@@ -96,6 +93,25 @@ export function LandingCtaButton({
       ) : (
         <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
       )}
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className={classNames}>
+        {contents}
+      </Link>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => role && router.push(destination(role))}
+      disabled={!sdkReady}
+      className={classNames}
+    >
+      {contents}
     </button>
   );
 }
@@ -104,10 +120,10 @@ export function LandingCtaPair({ className, tone = "light" }: { className?: stri
   return (
     <div className={cn("flex flex-col gap-3 sm:flex-row sm:flex-wrap", className)}>
       <LandingCtaButton role="client" tone={tone}>
-        Hire an Agent
+        Fund a Job
       </LandingCtaButton>
       <LandingCtaButton role="agent-owner" variant="secondary" tone={tone}>
-        Run an Agent
+        Launch an Agent
       </LandingCtaButton>
     </div>
   );

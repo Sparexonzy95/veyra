@@ -1,9 +1,10 @@
 "use client";
 
 import { useVeyra } from "@/components/providers/veyra-provider";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Bot, BriefcaseBusiness, Loader2 } from "lucide-react";
+import { VeyraWordmark } from "@/components/landing/veyra-wordmark";
+import { VeyraChoice } from "@/components/auth/veyra-choice";
+import { Loader2 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
@@ -14,57 +15,62 @@ export default function WorkspaceEntryPage() {
     busy,
     chooseClientRole,
     chooseAgentOwnerRole,
+    circleSession,
   } = useVeyra();
   const router = useRouter();
 
   useEffect(() => {
-    if (sdkReady && me && !me.authenticated) router.replace("/login");
-  }, [me, router, sdkReady]);
+    if (sdkReady && me && !me.authenticated && !circleSession) router.replace("/login");
+  }, [circleSession, me, router, sdkReady]);
 
-  if (!sdkReady || !me) {
-    return <div className="flex min-h-svh items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>;
+  if (!sdkReady || (!me && !circleSession)) {
+    return <div className="veyra-landing flex min-h-svh items-center justify-center bg-veyra-ink"><Loader2 className="h-6 w-6 animate-spin text-veyra-sand motion-reduce:animate-none" /></div>;
   }
-  if (!me.authenticated) return null;
+  if (!me?.authenticated && !circleSession) return null;
 
-  const hasClient = Boolean(me.capabilities?.includes("CLIENT"));
-  const hasAgentOwner = Boolean(me.capabilities?.includes("AGENT_OWNER"));
+  const hasClient = Boolean(me?.capabilities?.includes("CLIENT"));
+  const hasAgentOwner = Boolean(me?.capabilities?.includes("AGENT_OWNER"));
 
   return (
-    <main className="mx-auto flex min-h-svh w-full max-w-5xl flex-col justify-center px-5 py-12">
-      <div className="mx-auto mb-8 max-w-2xl text-center">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Choose a workspace</p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">How do you want to use Veyra?</h1>
-        <p className="mt-3 text-muted-foreground">One account and one sign-in can hold both roles. Switch whenever you need to.</p>
-      </div>
-      <div className="grid gap-5 md:grid-cols-2">
-        <Card className="border-primary/20">
-          <CardContent className="flex h-full flex-col p-7">
-            <BriefcaseBusiness className="h-9 w-9 text-primary" />
-            <h2 className="mt-5 text-2xl font-semibold">Hire an Agent</h2>
-            <p className="mt-2 flex-1 text-sm leading-6 text-muted-foreground">Post GitHub work, fund jobs, and track verified delivery.</p>
-            <Button
-              className="mt-7"
-              disabled={busy}
-              onClick={() => hasClient ? router.push("/client") : void chooseClientRole()}
-            >
-              {hasClient ? "Open Client workspace" : "Enable Client workspace"}
-            </Button>
-          </CardContent>
-        </Card>
-        <Card className="border-primary/20">
-          <CardContent className="flex h-full flex-col p-7">
-            <Bot className="h-9 w-9 text-primary" />
-            <h2 className="mt-5 text-2xl font-semibold">Run an Agent</h2>
-            <p className="mt-2 flex-1 text-sm leading-6 text-muted-foreground">Connect and manage Agent Starters, receive work, and earn USDC.</p>
-            <Button
-              className="mt-7"
-              disabled={busy}
-              onClick={() => hasAgentOwner ? router.push("/agent-owner") : void chooseAgentOwnerRole()}
-            >
-              {hasAgentOwner ? "Open Agent Owner workspace" : "Enable Agent Owner workspace"}
-            </Button>
-          </CardContent>
-        </Card>
+    <main className="veyra-landing relative isolate min-h-svh overflow-hidden bg-veyra-ink px-5 py-8 text-veyra-cream sm:px-6 lg:py-10">
+      <div className="pointer-events-none absolute inset-x-0 top-[-24rem] h-[42rem] bg-[radial-gradient(ellipse_at_center,rgba(196,173,141,0.16),transparent_62%)]" aria-hidden="true" />
+      <div className="relative mx-auto flex min-h-[calc(100svh-4rem)] w-full max-w-[1180px] flex-col">
+        <header className="flex items-center justify-between border-b border-veyra-cream/10 pb-6">
+          <Link href="/" aria-label="Veyra home" className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-veyra-cream">
+            <VeyraWordmark uid="workspace-choice" color="var(--veyra-cream)" className="w-[106px] sm:w-[118px]" />
+          </Link>
+          <Link href="/explore" className="rounded-full px-3 py-2 text-sm font-medium text-veyra-muted transition-colors hover:text-veyra-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-veyra-cream motion-reduce:transition-none">
+            Explore Issues
+          </Link>
+        </header>
+
+        <div className="flex flex-1 flex-col justify-center py-12 lg:py-16">
+          <div className="mx-auto mb-8 max-w-[720px] text-center lg:mb-10">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-veyra-sand">Choose your path</p>
+            <h1 className="mt-4 text-balance text-[clamp(2.25rem,5vw,4.25rem)] font-bold leading-[1.02] tracking-[-0.045em]">
+              Choose how you want to use Veyra
+            </h1>
+            <p className="mx-auto mt-5 max-w-[620px] text-pretty text-base leading-7 text-veyra-muted sm:text-lg">
+              Veyra supports task publishers and agent owners in one verified software-work economy.
+            </p>
+          </div>
+
+          <div className="mx-auto w-full max-w-[900px]">
+            <VeyraChoice
+              busy={busy}
+              hasMaintainer={hasClient}
+              hasAgentOwner={hasAgentOwner}
+              onChooseMaintainer={() => {
+                if (hasClient) router.push("/client");
+                else void chooseClientRole();
+              }}
+              onChooseAgentOwner={() => {
+                if (hasAgentOwner) router.push("/agent-owner");
+                else void chooseAgentOwnerRole();
+              }}
+            />
+          </div>
+        </div>
       </div>
     </main>
   );

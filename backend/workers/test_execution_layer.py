@@ -21,8 +21,13 @@ from jobs.models import (
     VeyraJob,
 )
 from workers.execution_matching import reserve_best_agent_for_job
-from workers.execution_recovery import recover_retryable_runtime_failures
+from workers.execution_control import claim_controller, release_controller
+from workers.execution_recovery import (
+    recover_retryable_runtime_failures,
+    retry_existing_runtime_assignment,
+)
 from workers.execution_status import assignment_public_snapshot, job_execution_snapshot
+from workers.capacity import active_assignment_count
 from workers.claiming import _validate_queue_for_preflight
 from workers.execution_transport import execution_task_for_connection, submit_execution_result
 from workers.execution_verification import (
@@ -358,6 +363,66 @@ class ExecutionLayerTests(TestCase):
         self.assertEqual(assignment.worker_id, self.agent_one.id)
         _validate_queue_for_preflight(assignment.queue_item)
 
+    @patch("workers.execution_matching.discover_job")
+    def test_submitted_assignment_releases_coding_capacity_for_next_job(self, discover):
+        discover.side_effect = self._discover_side_effect
+        old_job = self._create_job(103)
+        old_item = WorkerJobQueueItem.objects.create(
+            worker=self.agent_one,
+            job=old_job,
+            status=WorkerJobQueueItem.Status.SUBMITTED,
+            eligibility_passed=True,
+            eligibility_code="ELIGIBLE",
+            priority_score=1000,
+            onchain_status="SUBMITTED",
+            claim_arc_transaction_hash="0x" + "ab" * 32,
+            claim_confirmed_at=timezone.now(),
+            execution_post_test_passed=True,
+            execution_commit_sha="c" * 40,
+            execution_pull_request_number=43,
+            execution_pull_request_url="https://github.com/example/flask-repo/pull/43",
+            submission_commit_hash="0x" + "cc" * 32,
+            submission_deliverable_hash="0x" + "dd" * 32,
+            submission_arc_transaction_hash="0x" + "ee" * 32,
+            submission_confirmed_at=timezone.now(),
+        )
+        WorkerJobAssignment.objects.create(
+            job=old_job,
+            worker=self.agent_one,
+            queue_item=old_item,
+            status=WorkerJobAssignment.Status.VERIFYING,
+            reserved_until=timezone.now(),
+        )
+        self.connection_two.provider_ready = False
+        self.connection_two.save(update_fields=["provider_ready", "updated_at"])
+
+        assignment = reserve_best_agent_for_job(self.job)
+
+        self.assertEqual(active_assignment_count(self.agent_one), 1)
+        self.assertIsNotNone(assignment)
+        self.assertEqual(assignment.worker_id, self.agent_one.id)
+
+    def test_result_received_still_consumes_coding_capacity(self):
+        assignment = self._claimed_assignment(self.agent_one)
+        assignment.status = WorkerJobAssignment.Status.RESULT_RECEIVED
+        assignment.save(update_fields=["status", "updated_at"])
+
+        self.assertEqual(active_assignment_count(self.agent_one), 1)
+
+    def test_submitting_still_consumes_coding_capacity(self):
+        assignment = self._claimed_assignment(self.agent_one)
+        assignment.status = WorkerJobAssignment.Status.SUBMITTING
+        assignment.save(update_fields=["status", "updated_at"])
+
+        self.assertEqual(active_assignment_count(self.agent_one), 1)
+
+    def test_submitted_releases_coding_capacity(self):
+        assignment = self._claimed_assignment(self.agent_one)
+        assignment.status = WorkerJobAssignment.Status.SUBMITTED
+        assignment.save(update_fields=["status", "updated_at"])
+
+        self.assertEqual(active_assignment_count(self.agent_one), 0)
+
     def _online_execution_layer(self):
         now = timezone.now()
         return ExecutionLayerState.objects.create(
@@ -491,8 +556,98 @@ class ExecutionLayerTests(TestCase):
             original_claim_hash,
         )
         self.assertEqual(assignment.failure_stage, "")
+        self.assertEqual(active_assignment_count(self.agent_one), 1)
 
         self.assertEqual(recover_retryable_runtime_failures(cycle_number=8), 0)
+
+    def test_legacy_json_decode_failure_is_retryable_and_publicly_normalised(self):
+        assignment = self._claimed_assignment(self.agent_one)
+        original_claim_hash = assignment.queue_item.claim_arc_transaction_hash
+        assignment.status = WorkerJobAssignment.Status.FAILED
+        assignment.failure_stage = "runtime_execution"
+        assignment.failure_message = "Expecting value: line 1 column 12 (char 11)"
+        assignment.save(
+            update_fields=["status", "failure_stage", "failure_message", "updated_at"]
+        )
+        item = assignment.queue_item
+        item.status = WorkerJobQueueItem.Status.FAILED
+        item.execution_failure_stage = assignment.failure_stage
+        item.execution_failure_message = assignment.failure_message
+        item.save(
+            update_fields=[
+                "status",
+                "execution_failure_stage",
+                "execution_failure_message",
+                "updated_at",
+            ]
+        )
+
+        snapshot = assignment_public_snapshot(assignment)
+        self.assertEqual(snapshot["failure_stage"], "AI_RESPONSE_INVALID")
+        self.assertNotIn("Expecting value", snapshot["failure_message"])
+
+        self.assertEqual(recover_retryable_runtime_failures(cycle_number=10), 1)
+        assignment.refresh_from_db()
+        item.refresh_from_db()
+        self.assertEqual(assignment.status, WorkerJobAssignment.Status.CLAIMED)
+        self.assertEqual(item.claim_arc_transaction_hash, original_claim_hash)
+        self.assertFalse(item.execution_commit_sha)
+        self.assertIsNone(item.execution_pull_request_number)
+        self.assertFalse(item.submission_arc_transaction_hash)
+
+    def test_explicit_runtime_retry_is_idempotent_and_preserves_claim_identity(self):
+        assignment = self._claimed_assignment(self.agent_one)
+        assignment.status = WorkerJobAssignment.Status.FAILED
+        assignment.assignment_attempt = 1
+        assignment.failure_stage = "runtime_execution"
+        assignment.failure_message = "Expecting value: line 1 column 12 (char 11)"
+        assignment.save(
+            update_fields=[
+                "status", "assignment_attempt", "failure_stage",
+                "failure_message", "updated_at",
+            ]
+        )
+        item = assignment.queue_item
+        item.status = WorkerJobQueueItem.Status.FAILED
+        item.execution_failure_stage = assignment.failure_stage
+        item.execution_failure_message = assignment.failure_message
+        item.save(
+            update_fields=[
+                "status", "execution_failure_stage",
+                "execution_failure_message", "updated_at",
+            ]
+        )
+        original_assignment_id = assignment.id
+        original_queue_id = item.id
+        original_claim_hash = item.claim_arc_transaction_hash
+
+        retried, changed = retry_existing_runtime_assignment(assignment)
+        repeated, repeated_changed = retry_existing_runtime_assignment(retried)
+
+        item.refresh_from_db()
+        self.assertTrue(changed)
+        self.assertFalse(repeated_changed)
+        self.assertEqual(retried.id, original_assignment_id)
+        self.assertEqual(repeated.id, original_assignment_id)
+        self.assertEqual(item.id, original_queue_id)
+        self.assertEqual(item.claim_arc_transaction_hash, original_claim_hash)
+        self.assertEqual(repeated.assignment_attempt, 2)
+        self.assertEqual(active_assignment_count(self.agent_one), 1)
+        self.assertEqual(WorkerJobAssignment.objects.filter(job=self.job).count(), 1)
+        self.assertEqual(WorkerJobQueueItem.objects.filter(job=self.job).count(), 1)
+        self.assertFalse(item.submission_arc_transaction_hash)
+        self.assertFalse(item.execution_commit_sha)
+
+    def test_execution_controller_database_lease_blocks_duplicate_and_recovers_after_release(self):
+        first = claim_controller()
+
+        with self.assertRaisesRegex(RuntimeError, "active database lease"):
+            claim_controller()
+
+        release_controller(first)
+        second = claim_controller()
+        self.assertNotEqual(first, second)
+        release_controller(second)
 
     @override_settings(VEYRA_JOB_MAX_RUNTIME_ATTEMPTS=2)
     def test_retryable_runtime_failure_stops_at_attempt_limit(self):
@@ -657,6 +812,12 @@ class ExecutionLayerTests(TestCase):
 
     @patch("workers.execution_verification.GitHubAppExecutionClient.for_job")
     def test_independent_github_check_is_required_before_settlement(self, github_for_job):
+        snapshot = self.job.draft.funding_snapshot
+        snapshot.policy_commitment = {
+            **snapshot.policy_commitment,
+            "requireGithubChecks": True,
+        }
+        snapshot.save(update_fields=["policy_commitment"])
         assignment = self._claimed_assignment(self.agent_one)
         task = execution_task_for_connection(self.connection_one)
         assignment.refresh_from_db()

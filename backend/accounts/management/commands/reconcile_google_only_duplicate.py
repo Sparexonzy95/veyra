@@ -119,8 +119,17 @@ class Command(BaseCommand):
 
     @staticmethod
     def _backup_status():
-        backup = Path(settings.VEYRA_RECONCILIATION_BACKUP_PATH)
+        # An unset path must never look like a valid backup. Path('') resolves to
+        # the current directory, whose stat() succeeds with a non-zero size, so
+        # the configured value is checked before stat and the target is required
+        # to be a regular file rather than a directory.
+        configured = str(settings.VEYRA_RECONCILIATION_BACKUP_PATH or '').strip()
+        if not configured:
+            return Path(configured), 0, False
+        backup = Path(configured)
         try:
+            if not backup.is_file():
+                return backup, 0, False
             size = backup.stat().st_size
         except OSError:
             return backup, 0, False
@@ -135,10 +144,41 @@ class Command(BaseCommand):
             raise CommandError('Canonical user is missing.') from exc
         duplicate = users.filter(pk=DUPLICATE_USER_ID).first()
         if duplicate is None:
+            canonical_wallets = list(canonical.wallet_accounts.all())
+            canonical_identity = canonical.external_identities.filter(
+                provider=ExternalIdentity.Provider.CIRCLE_SSO_GOOGLE,
+                method=ExternalIdentity.Method.GOOGLE,
+            ).first()
+            canonical_caps = set(canonical.capabilities.filter(
+                revoked_at__isnull=True,
+            ).values_list('code', flat=True))
+            canonical_counts = self._related_counts(canonical)
+            canonical_remote_ok, canonical_remote_error = self._confirm_canonical_remote(
+                canonical_wallets,
+                canonical_identity,
+            )
+            blockers = self._canonical_blockers(
+                backup_ok=backup_ok,
+                canonical_wallets=canonical_wallets,
+                canonical_identity=canonical_identity,
+                canonical_caps=canonical_caps,
+                canonical_counts=canonical_counts,
+                canonical_remote_ok=canonical_remote_ok,
+                canonical_remote_error=canonical_remote_error,
+            )
             return {
                 'backup': backup, 'backup_size': backup_size, 'backup_ok': backup_ok,
                 'canonical': canonical, 'duplicate': None, 'duplicate_absent': True,
-                'blockers': [],
+                'canonical_wallets': canonical_wallets,
+                'canonical_identity': canonical_identity,
+                'canonical_caps': canonical_caps,
+                'canonical_counts': canonical_counts,
+                'canonical_remote_ok': canonical_remote_ok,
+                'canonical_remote_error': canonical_remote_error,
+                'retained_audit_logs': AuditLog.objects.filter(
+                    metadata__removed_local_duplicate_user_id=DUPLICATE_USER_ID,
+                ).count(),
+                'blockers': blockers,
             }
 
         canonical_wallets = list(canonical.wallet_accounts.all())
@@ -153,20 +193,10 @@ class Command(BaseCommand):
         counts = self._related_counts(duplicate)
         canonical_counts = self._related_counts(canonical)
 
-        canonical_remote_error = ''
-        canonical_remote_ok = False
-        if len(canonical_wallets) == 1 and canonical_identity is not None:
-            try:
-                remote_wallet = CircleClient().get_wallet(canonical_wallets[0].circle_wallet_id)
-                remote_user = CircleClient().get_user(remote_wallet.get('userId', ''))
-                canonical_remote_ok = (
-                    remote_wallet.get('id') == canonical_wallets[0].circle_wallet_id
-                    and remote_wallet.get('address', '').lower() == canonical_wallets[0].address.lower()
-                    and remote_wallet.get('userId') == canonical_identity.provider_user_id
-                    and remote_user.get('authMode') == 'SSO'
-                )
-            except (CircleError, TypeError, ValueError) as exc:
-                canonical_remote_error = str(exc)
+        canonical_remote_ok, canonical_remote_error = self._confirm_canonical_remote(
+            canonical_wallets,
+            canonical_identity,
+        )
 
         live_balance = None
         balance_error = ''
@@ -177,26 +207,15 @@ class Command(BaseCommand):
             except (CircleError, InvalidOperation, TypeError, ValueError) as exc:
                 balance_error = str(exc)
 
-        blockers = []
-        if not backup_ok:
-            blockers.append('verified database backup is missing or empty')
-        if canonical_identity is None:
-            blockers.append('canonical Circle SSO Google identity migration is incomplete')
-        if not settings.VEYRA_RECONCILIATION_TESTS_PASSED:
-            blockers.append('automated validation has not been asserted for this apply session')
-        if len(canonical_wallets) != 1 or not _matches_address(
-            canonical_wallets[0].address if canonical_wallets else '',
-            CANONICAL_WALLET_PREFIX, CANONICAL_WALLET_SUFFIX,
-        ):
-            blockers.append('canonical wallet does not match the approved wallet')
-        if canonical_remote_error or not canonical_remote_ok:
-            blockers.append('canonical Circle SSO user and wallet could not be confirmed live')
-        if canonical_caps != {'CLIENT', 'AGENT_OWNER'}:
-            blockers.append('canonical capabilities are not exactly CLIENT and AGENT_OWNER')
-        canonical_minimums = {'jobs': 7, 'drafts': 12, 'agents': 4, 'transactions': 21}
-        for key, minimum in canonical_minimums.items():
-            if canonical_counts[key] < minimum:
-                blockers.append(f'canonical known {key} history is incomplete')
+        blockers = self._canonical_blockers(
+            backup_ok=backup_ok,
+            canonical_wallets=canonical_wallets,
+            canonical_identity=canonical_identity,
+            canonical_caps=canonical_caps,
+            canonical_counts=canonical_counts,
+            canonical_remote_ok=canonical_remote_ok,
+            canonical_remote_error=canonical_remote_error,
+        )
         if len(duplicate_wallets) != 1 or not _matches_address(
             duplicate_wallets[0].address if duplicate_wallets else '',
             DUPLICATE_WALLET_PREFIX, DUPLICATE_WALLET_SUFFIX,
@@ -237,6 +256,48 @@ class Command(BaseCommand):
         }
 
     @staticmethod
+    def _confirm_canonical_remote(canonical_wallets, canonical_identity):
+        if len(canonical_wallets) != 1 or canonical_identity is None:
+            return False, ''
+        try:
+            remote_wallet = CircleClient().get_wallet(canonical_wallets[0].circle_wallet_id)
+            remote_user = CircleClient().get_user(remote_wallet.get('userId', ''))
+            confirmed = (
+                remote_wallet.get('id') == canonical_wallets[0].circle_wallet_id
+                and remote_wallet.get('address', '').lower() == canonical_wallets[0].address.lower()
+                and remote_wallet.get('userId') == canonical_identity.provider_user_id
+                and remote_user.get('authMode') == 'SSO'
+            )
+            return confirmed, ''
+        except (CircleError, TypeError, ValueError) as exc:
+            return False, str(exc)
+
+    @staticmethod
+    def _canonical_blockers(
+        *, backup_ok, canonical_wallets, canonical_identity, canonical_caps,
+        canonical_counts, canonical_remote_ok, canonical_remote_error,
+    ):
+        blockers = []
+        if not backup_ok:
+            blockers.append('verified database backup is missing or empty')
+        if canonical_identity is None:
+            blockers.append('canonical Circle SSO Google identity migration is incomplete')
+        if len(canonical_wallets) != 1 or not _matches_address(
+            canonical_wallets[0].address if canonical_wallets else '',
+            CANONICAL_WALLET_PREFIX, CANONICAL_WALLET_SUFFIX,
+        ):
+            blockers.append('canonical wallet does not match the approved wallet')
+        if canonical_remote_error or not canonical_remote_ok:
+            blockers.append('canonical Circle SSO user and wallet could not be confirmed live')
+        if canonical_caps != {'CLIENT', 'AGENT_OWNER'}:
+            blockers.append('canonical capabilities are not exactly CLIENT and AGENT_OWNER')
+        canonical_minimums = {'jobs': 7, 'drafts': 12, 'agents': 4, 'transactions': 21}
+        for key, minimum in canonical_minimums.items():
+            if canonical_counts[key] < minimum:
+                blockers.append(f'canonical known {key} history is incomplete')
+        return blockers
+
+    @staticmethod
     def _balance_value(item):
         return Decimal(str(item.get('amount', item.get('balance', '0')) or '0'))
 
@@ -268,6 +329,29 @@ class Command(BaseCommand):
         self.stdout.write(f'Canonical user: {canonical.pk} created={canonical.date_joined.isoformat()}')
         if report.get('duplicate_absent'):
             self.stdout.write('Duplicate user: absent (already reconciled)')
+            self.stdout.write(f"Canonical capabilities: {sorted(report['canonical_caps'])}")
+            self.stdout.write('Canonical retained activity: ' + ', '.join(
+                f'{key}={value}' for key, value in report['canonical_counts'].items()
+            ))
+            identity = report['canonical_identity']
+            self.stdout.write('Canonical identity: ' + _truncate(
+                identity.provider_user_id if identity else 'missing'
+            ))
+            self.stdout.write('Canonical wallets: ' + ', '.join(
+                _truncate(item.address) for item in report['canonical_wallets']
+            ))
+            self.stdout.write(
+                f"Canonical Circle SSO wallet confirmed live: {report['canonical_remote_ok']}"
+            )
+            self.stdout.write(
+                f"Preserved duplicate audit logs: {report['retained_audit_logs']}"
+            )
+            self.stdout.write(
+                'External Circle EMAIL user/wallet: retained untouched and inactive/orphaned in Veyra'
+            )
+            self.stdout.write('Safety gates: ' + ('PASS' if not report['blockers'] else 'BLOCKED'))
+            for blocker in report['blockers']:
+                self.stdout.write(self.style.ERROR(f'  - {blocker}'))
             return
         duplicate = report['duplicate']
         self.stdout.write(f'Duplicate user: {duplicate.pk} created={duplicate.date_joined.isoformat()}')

@@ -298,3 +298,33 @@ class ReconciliationCommandTests(TestCase):
         with self.assertRaises(CommandError):
             self.command('--dry-run')
         self.assertTrue(User.objects.filter(pk=self.duplicate_id).exists())
+
+    @patch('accounts.management.commands.reconcile_google_only_duplicate.CircleClient.get_user', return_value={'authMode': 'SSO'})
+    @patch('accounts.management.commands.reconcile_google_only_duplicate.CircleClient.get_wallet', return_value={
+        'id': 'canonical-wallet', 'address': '0x68301b0000000000000000000000000000007949',
+        'userId': '0067ba7e-test',
+    })
+    @patch('accounts.management.commands.reconcile_google_only_duplicate.CircleClient.wallet_balances_for_wallet', return_value=[])
+    def test_post_cleanup_dry_run_revalidates_canonical_account(self, *_mocks):
+        self.command('--apply', confirm=f'DELETE-EMPTY-DUPLICATE-{self.duplicate_id}')
+
+        self.command('--dry-run')
+
+        self.assertFalse(User.objects.filter(pk=self.duplicate_id).exists())
+        self.assertTrue(User.objects.filter(pk=self.canonical_id).exists())
+        self.assertEqual(WalletAccount.objects.filter(user_id=self.canonical_id).count(), 1)
+
+    @patch('accounts.management.commands.reconcile_google_only_duplicate.CircleClient.get_user', return_value={'authMode': 'SSO'})
+    @patch('accounts.management.commands.reconcile_google_only_duplicate.CircleClient.get_wallet', return_value={
+        'id': 'canonical-wallet', 'address': '0x68301b0000000000000000000000000000007949',
+        'userId': '0067ba7e-test',
+    })
+    @patch('accounts.management.commands.reconcile_google_only_duplicate.CircleClient.wallet_balances_for_wallet', return_value=[])
+    def test_post_cleanup_dry_run_blocks_if_canonical_wallet_changes(self, *_mocks):
+        self.command('--apply', confirm=f'DELETE-EMPTY-DUPLICATE-{self.duplicate_id}')
+        wallet = WalletAccount.objects.get(user_id=self.canonical_id)
+        wallet.address = '0x9999999999999999999999999999999999999999'
+        wallet.save(update_fields=['address'])
+
+        with self.assertRaises(CommandError):
+            self.command('--dry-run')

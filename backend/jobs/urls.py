@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from jobs.views import CircleTransactionListView, CircleTransactionStatusView, ClientJobViewSet, DashboardView, GithubIssuePreviewView, JobDraftViewSet
-from jobs.github_views import GitHubConnectionStatusView, GitHubInstallStartView, GitHubInstallCompleteView, GitHubInstallationRefreshView, GitHubInstallationDisconnectView, GitHubRepositoryIssueListView
+from jobs.github_views import GitHubConnectionStatusView, GitHubInstallStartView, GitHubInstallCompleteView, GitHubInstallationRefreshView, GitHubInstallationDisconnectView, GitHubRepositoryIssueListView, GitHubRepositoryCiPreflightView
 
 router = DefaultRouter()
 router.register('job-drafts', JobDraftViewSet, basename='job-draft')
@@ -14,6 +14,10 @@ urlpatterns = [
     path(
         'github/app/repositories/<uuid:repository_access_id>/issues/',
         GitHubRepositoryIssueListView.as_view(),
+    ),
+    path(
+        'github/app/repositories/<uuid:repository_access_id>/ci-preflight/',
+        GitHubRepositoryCiPreflightView.as_view(),
     ),
     path('github/app/install/start/', GitHubInstallStartView.as_view()),
     path('github/app/install/complete/', GitHubInstallCompleteView.as_view()),

@@ -1,0 +1,27 @@
+# Normalise line endings so the repository is stable across Windows, macOS and
+# Linux checkouts. Git stores LF and converts on checkout per the rules below.
+* text=auto
+
+# PowerShell must stay CRLF. Windows PowerShell can fail on LF-only scripts.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Shell scripts must stay LF or they will not execute on Linux/macOS.
+*.sh text eol=lf
+
+# Binary assets must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.woff binary
+*.woff2 binary
+
+# Lockfiles are generated. Collapsing them in diffs keeps reviews readable.
+package-lock.json linguist-generated=true -diff

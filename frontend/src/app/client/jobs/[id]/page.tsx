@@ -3,32 +3,42 @@
 import { JobStatusBadge } from "@/components/jobs/job-status-badge";
 import { useVeyra } from "@/components/providers/veyra-provider";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { apiFetch, postJson } from "@/lib/api";
 import type { CircleChallengeResponse, JobDetail } from "@/types/veyra";
 import {
   ArrowLeft,
-  Calendar,
-  CheckCircle2,
-  CircleDollarSign,
+  Check,
   ExternalLink,
-  Github,
   GitPullRequest,
   Loader2,
-  ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-const steps = ["OPEN", "AGENT_WORKING", "UNDER_REVIEW", "COMPLETED"];
+const steps = ["OPEN", "AGENT_WORKING", "UNDER_REVIEW", "COMPLETED"] as const;
+const stepLabels = ["Open", "Agent working", "Review", "Completed"];
 
-function shortAddress(value?: string) {
-  return value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "Not assigned";
-}
+/** States where a four-step timeline would misdescribe what happened. */
+const ENDED_EARLY = ["REFUNDED", "CANCELLED"];
 
+/**
+ * Client job detail.
+ *
+ * Layout: compact header, three summary facts, an inline timeline, then two
+ * columns — the task and its acceptance checklist on the left, a single Work
+ * summary on the right. Everything an engineer needs and a publisher does
+ * not (hashes, IDs, contract status, retry bookkeeping) sits in one closed
+ * `Technical details` block at the end.
+ *
+ * Surfaces are drawn directly here rather than with Panel/PanelHeader
+ * because Panel adds a bordered header strip per section; at this density
+ * that produced a stack of nested boxes, which is what the redesign is
+ * meant to remove. Colours are all semantic tokens (`card`, `border`,
+ * `foreground`, `muted-foreground`), so the near-black/graphite/cream
+ * palette comes from the theme rather than from hardcoded values here.
+ */
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
   const { circleToken, executeTrackedChallenge } = useVeyra();
@@ -36,45 +46,43 @@ export default function JobDetailPage() {
   const [job, setJob] = useState<JobDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [retryLoading, setRetryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    setError(null);
-
-    try {
-      const loadedJob = await apiFetch<JobDetail>(
-        `/api/v1/client/jobs/${params.id}/`,
-      );
-      setJob(loadedJob);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Job could not be loaded.",
-      );
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [params.id]);
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        setJob(await apiFetch<JobDetail>(`/api/v1/client/jobs/${params.id}/`));
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Job could not be loaded.",
+        );
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [params.id],
+  );
 
   useEffect(() => {
     void load();
-    const interval = window.setInterval(() => void load(true), 8000);
-    return () => window.clearInterval(interval);
   }, [load]);
+
+  useEffect(() => {
+    if (job?.client_status === "COMPLETED" || ENDED_EARLY.includes(job?.client_status || "")) {
+      return;
+    }
+    const interval = window.setInterval(() => void load(true), 2000);
+    return () => window.clearInterval(interval);
+  }, [job?.client_status, load]);
 
   const activeIndex = useMemo(() => {
     if (!job) return 0;
-
-    if (
-      job.client_status === "REFUNDED" ||
-      job.client_status === "CANCELLED"
-    ) {
-      return 3;
-    }
-
-    return Math.max(0, steps.indexOf(job.client_status));
+    return Math.max(0, steps.indexOf(job.client_status as (typeof steps)[number]));
   }, [job]);
 
   async function performAction() {
@@ -82,9 +90,7 @@ export default function JobDetailPage() {
       toast.error("Reconnect your secure wallet to continue.");
       return;
     }
-
     setActionLoading(true);
-
     try {
       const challenge = await postJson<
         CircleChallengeResponse & { action: { label: string } }
@@ -93,37 +99,46 @@ export default function JobDetailPage() {
         {},
         circleToken,
       );
-
-      const challengeId = challenge.challenge_id;
-
-      if (!challengeId) {
-        throw new Error(
-          "Circle did not return the transaction approval request.",
-        );
+      if (!challenge.challenge_id) {
+        throw new Error("Circle did not return the transaction approval request.");
       }
-
-      await executeTrackedChallenge(
-        challengeId,
-        challenge.transaction_id,
-      );
-
+      await executeTrackedChallenge(challenge.challenge_id, challenge.transaction_id);
       toast.success(`${challenge.action.label} submitted to Arc.`);
       await load();
     } catch (actionError) {
       toast.error(
-        actionError instanceof Error
-          ? actionError.message
-          : "Action failed.",
+        actionError instanceof Error ? actionError.message : "Action failed.",
       );
     } finally {
       setActionLoading(false);
     }
   }
 
+  async function retryExecution() {
+    if (!job?.execution.assignment?.retryable || retryLoading) return;
+    setRetryLoading(true);
+    try {
+      const result = await postJson<{ code: string; message: string }>(
+        `/api/v1/client/jobs/${job.onchain_job_id}/retry-execution/`,
+        {},
+      );
+      toast.success(result.message);
+      await load(true);
+    } catch (retryError) {
+      toast.error(
+        retryError instanceof Error
+          ? retryError.message
+          : "The execution retry could not be queued.",
+      );
+    } finally {
+      setRetryLoading(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
       </div>
     );
   }
@@ -136,423 +151,414 @@ export default function JobDetailPage() {
     );
   }
 
+  const assignment = job.execution.assignment;
+  const verifier = assignment?.independent_verifier ?? null;
+  const executionProgress = assignment?.runtime.progress ?? null;
+  const verifierProgress = verifier?.progress ?? null;
+  const verdict = verifier?.verdict || assignment?.verification_status || "";
+  const settled = Boolean(
+    assignment?.settlement_confirmed_at && job.client_status === "COMPLETED",
+  );
+  const settlementPending = Boolean(
+    !settled &&
+      (assignment?.status === "SETTLING" || assignment?.settlement_transaction_hash),
+  );
+  const settlementLabel = settled
+    ? "Paid to agent"
+    : settlementPending
+      ? "Settlement pending"
+      : "Held in escrow";
+  const problem = assignment?.attention_message || assignment?.failure_message || "";
+  const waitingForGithubCi = Boolean(
+    job.verification_requirements?.github_ci_required &&
+      assignment?.failure_stage === "verification_pending" &&
+      problem.toLowerCase().includes("github ci"),
+  );
+  const canRetryExecution = Boolean(
+    assignment?.status === "FAILED" && assignment.retryable,
+  );
+  // A timeline is only honest while the job is still walking the four steps.
+  const showTimeline = !ENDED_EARLY.includes(job.client_status);
+  // "Completed" already implies "Verified", so a second badge saying so is
+  // noise. The verdict earns its place only when it disagrees with the
+  // status badge: work rejected, or verified but not yet completed.
+  const showVerdict =
+    isRejected(verdict) ||
+    (isApproved(verdict) && job.client_status !== "COMPLETED");
+  // Hashes and wallets are the technical payload; the onchain ID and
+  // contract status alone do not justify a disclosure of their own.
+  const hasTechnical = Boolean(
+    job.commit_hash ||
+      job.report_hash ||
+      job.evidence_hash ||
+      assignment?.settlement_transaction_hash ||
+      assignment?.agent.wallet_address,
+  );
+
   return (
-    <div className="space-y-6">
-      <Button variant="ghost" asChild className="px-0">
-        <Link href="/client/jobs">
-          <ArrowLeft className="h-4 w-4" />
+    <div className="space-y-4">
+      {/* Header */}
+      <div>
+        <Link
+          href="/client/jobs"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
           Back to Jobs
         </Link>
-      </Button>
 
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
-        <div>
-          <div className="mb-2 flex items-center gap-3">
-            <JobStatusBadge status={job.client_status} />
+        <div className="mt-2 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-semibold tracking-tight text-foreground md:text-xl">
+                {job.title}
+              </h1>
+              <JobStatusBadge status={job.client_status} />
+              {showVerdict ? <VerdictBadge verdict={verdict} /> : null}
+            </div>
+            <a
+              href={job.github_issue_url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              {job.repository} · Issue #{job.issue_number}
+              <ExternalLink className="h-3 w-3" />
+            </a>
           </div>
 
-          <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-            {job.title}
-          </h1>
+          {job.available_action ? (
+            <Button
+              size="sm"
+              variant={
+                job.available_action.code === "CANCEL_JOB" ? "destructive" : "default"
+              }
+              onClick={() => void performAction()}
+              disabled={actionLoading}
+              className="h-8 shrink-0"
+            >
+              {actionLoading ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              {job.available_action.label}
+            </Button>
+          ) : null}
+        </div>
+      </div>
 
-          <a
-            href={job.github_issue_url}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-2 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary"
-          >
-            <Github className="h-4 w-4" />
-            {job.repository} · Issue #{job.issue_number}
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
+      {/* Summary: three facts on one line, not four cards. */}
+      <dl className="flex flex-wrap items-center gap-x-8 gap-y-2 rounded-lg border border-border bg-card px-4 py-2.5">
+        <Fact label="Reward" value={`${formatUsdc(job.budget_usdc)} USDC`} />
+        <Fact
+          label="Deadline"
+          value={new Date(job.expires_at * 1000).toLocaleDateString()}
+        />
+        <Fact label="Settlement" value={settlementLabel} />
+      </dl>
+
+      {problem ? (
+        <div
+          className={`flex flex-col gap-2 rounded-lg border px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between ${
+            waitingForGithubCi
+              ? "border-amber-300 bg-amber-50/60 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
+              : "border-destructive/30 bg-destructive/5 text-destructive"
+          }`}
+        >
+          <div>
+            <p>{problem}</p>
+            {waitingForGithubCi ? (
+              <p className="mt-1 opacity-80">
+                This requirement was locked when the job was funded. Veyra rechecks the exact submitted commit automatically.
+              </p>
+            ) : null}
+          </div>
+          {canRetryExecution && !waitingForGithubCi ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void retryExecution()}
+              disabled={retryLoading}
+              className="h-8 shrink-0 border-destructive/40 bg-background text-foreground hover:bg-destructive/10"
+            >
+              {retryLoading ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              Retry execution
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {showTimeline ? (
+        <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 px-0.5 text-xs">
+          {steps.map((step, index) => (
+            <li key={step} className="flex items-center gap-2">
+              {index > 0 ? (
+                <span aria-hidden className="text-muted-foreground/40">
+                  ›
+                </span>
+              ) : null}
+              <span
+                className={
+                  index < activeIndex
+                    ? "inline-flex items-center gap-1 text-muted-foreground"
+                    : index === activeIndex
+                      ? "font-medium text-foreground"
+                      : "text-muted-foreground/50"
+                }
+              >
+                {index < activeIndex ? (
+                  <Check className="h-3 w-3 text-primary" aria-hidden />
+                ) : null}
+                {stepLabels[index]}
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+
+      {/* Two columns on desktop, stacked on mobile. */}
+      <div className="grid gap-4 lg:grid-cols-5">
+        <div className="space-y-4 lg:col-span-3">
+          {/* No "Task" panel: the client job endpoint returns no description
+              field (the brief lives in the GitHub issue), so the panel could
+              only repeat the title already shown in the header. The issue
+              link stays in the header where the repository is. */}
+          <section className="rounded-lg border border-border bg-card p-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Acceptance criteria
+            </h2>
+            {job.acceptance_criteria.length ? (
+              <ul className="mt-2 space-y-1.5">
+                {job.acceptance_criteria.map((criterion) => (
+                  <li key={criterion} className="flex items-start gap-2 text-sm">
+                    <Check
+                      className="mt-[3px] h-3.5 w-3.5 shrink-0 text-primary"
+                      aria-hidden
+                    />
+                    <span className="text-foreground">{criterion}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">
+                None recorded for this job.
+              </p>
+            )}
+          </section>
         </div>
 
-        {job.available_action ? (
-          <Button
-            variant={
-              job.available_action.code === "CANCEL_JOB"
-                ? "destructive"
-                : "default"
-            }
-            onClick={() => void performAction()}
-            disabled={actionLoading}
-          >
-            {actionLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : null}
-            {job.available_action.label}
-          </Button>
-        ) : null}
-      </div>
+        {/* Work summary: one panel, four facts, no table rows. */}
+        <section className="rounded-lg border border-border bg-card p-4 lg:col-span-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Work summary
+          </h2>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Job Progress</CardTitle>
-        </CardHeader>
+          {assignment ? (
+            <div className="mt-3 space-y-3 text-sm">
+              <Item label="Agent">{assignment.agent.name}</Item>
 
-        <CardContent>
-          <div className="grid gap-5 md:grid-cols-4">
-            {steps.map((step, index) => {
-              const complete = index <= activeIndex;
-
-              const finalLabel =
-                index === 3 && job.client_status === "REFUNDED"
-                  ? "Refunded"
-                  : index === 3 && job.client_status === "CANCELLED"
-                    ? "Cancelled"
-                    : step
-                        .replaceAll("_", " ")
-                        .replace("AGENT WORKING", "Agent Working")
-                        .replace("UNDER REVIEW", "Under Review")
-                        .replace("OPEN", "Open")
-                        .replace("COMPLETED", "Completed");
-
-              return (
-                <div
-                  key={step}
-                  className="relative flex items-start gap-3 md:flex-col"
-                >
-                  <div
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border ${
-                      complete
-                        ? "border-primary bg-primary-50 text-primary-700"
-                        : "bg-background text-muted-foreground"
-                    }`}
-                  >
-                    {complete && index < activeIndex ? (
-                      <CheckCircle2 className="h-5 w-5" />
-                    ) : (
-                      <span className="text-sm font-semibold">{index + 1}</span>
-                    )}
-                  </div>
-
-                  <div>
-                    <p
-                      className={`text-sm font-medium ${
-                        complete ? "text-foreground" : "text-muted-foreground"
-                      }`}
-                    >
-                      {finalLabel}
-                    </p>
-
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {index === 0
-                        ? "Available to agents"
-                        : index === 1
-                          ? "Agent completing work"
-                          : index === 2
-                            ? "Verifier checking outcome"
-                            : "Settlement complete"}
-                    </p>
-                  </div>
-
-                  {index < steps.length - 1 ? (
-                    <div
-                      className={`absolute left-4 top-9 hidden h-px w-[calc(100%-1rem)] md:block ${
-                        index < activeIndex ? "bg-primary" : "bg-border"
-                      }`}
-                    />
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-            <CardTitle>Work &amp; verification</CardTitle>
-            <span className="text-sm font-medium text-muted-foreground">
-              {job.execution.assignment?.stage_label ??
-                job.execution.matching_status.replaceAll("_", " ").toLowerCase()}
-            </span>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {job.execution.assignment ? (
-            <>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-xl border p-4">
-                  <p className="text-xs text-muted-foreground">Agent</p>
-                  <p className="mt-1 font-semibold">{job.execution.assignment.agent.name}</p>
-                </div>
-                <div className="rounded-xl border p-4">
-                  <p className="text-xs text-muted-foreground">Pull request</p>
-                  {job.execution.assignment.pull_request_url ? (
-                    <a href={job.execution.assignment.pull_request_url} target="_blank" rel="noreferrer" className="mt-1 flex items-center gap-2 font-semibold hover:text-primary">
-                      <GitPullRequest className="h-4 w-4" /> #{job.execution.assignment.pull_request_number}
-                    </a>
-                  ) : <p className="mt-1 font-semibold">Not submitted yet</p>}
-                </div>
-                <div className="rounded-xl border p-4">
-                  <p className="text-xs text-muted-foreground">Verification</p>
-                  <p className="mt-1 font-semibold">
-                    {job.execution.assignment.independent_verifier?.verdict ||
-                      job.execution.assignment.verification_status ||
-                      "Pending"}
-                  </p>
-                </div>
-                <div className="rounded-xl border p-4">
-                  <p className="text-xs text-muted-foreground">Payment</p>
-                  <p className="mt-1 font-semibold">
-                    {job.execution.assignment.settlement_transaction_hash
-                      ? "Settled"
-                      : "Protected in escrow"}
-                  </p>
-                </div>
-              </div>
-              {job.execution.assignment.attention_required || job.execution.assignment.failure_message ? (
-                <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                  {job.execution.assignment.attention_message || job.execution.assignment.failure_message}
-                </div>
-              ) : null}
-              <details className="rounded-xl border bg-muted/20 p-4 text-sm">
-                <summary className="cursor-pointer font-medium">Execution details</summary>
-                <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <div className="rounded-xl border p-4">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Selected agent</p>
-                <p className="mt-1 font-semibold">{job.execution.assignment.agent.name}</p>
-              </div>
-              <div className="rounded-xl border p-4">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Finding an agent</p>
-                <p className="mt-1 font-semibold">
-                  1 of {job.execution.assignment.candidate_count} eligible agent{job.execution.assignment.candidate_count === 1 ? "" : "s"}
-                </p>
-              </div>
-              <div className="rounded-xl border p-4">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Progress</p>
-                <p className="mt-1 font-semibold">{job.execution.assignment.stage_label}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Attempt {job.execution.assignment.assignment_attempt}</p>
-              </div>
-              <div className="md:col-span-3 rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground">
-                {job.execution.assignment.selection_reason}
-              </div>
-              {job.execution.assignment.attention_required ? (
-                <div className="md:col-span-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                  <p className="font-semibold">Needs attention</p>
-                  <p className="mt-1">{job.execution.assignment.attention_message}</p>
-                </div>
-              ) : null}
-              {job.execution.assignment.independent_verifier ? (
-                <div className="md:col-span-3 grid gap-4 rounded-xl border border-primary/20 bg-primary/5 p-4 md:grid-cols-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Independent verifier agent</p>
-                    <p className="mt-1 flex items-center gap-2 font-semibold">
-                      <ShieldCheck className="h-4 w-4" />
-                      {job.execution.assignment.independent_verifier.agent.name}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      A separate agent reviews the delivery independently.
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Review status</p>
-                    <p className="mt-1 font-semibold">
-                      {job.execution.assignment.independent_verifier.verdict || job.execution.assignment.independent_verifier.status}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Attempt {job.execution.assignment.independent_verifier.assignment_attempt} · {job.execution.assignment.independent_verifier.candidate_count} eligible verifier{job.execution.assignment.independent_verifier.candidate_count === 1 ? "" : "s"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Decision rule</p>
-                    <p className="mt-1 font-semibold">CI + verifier approval</p>
-                    <p className="mt-1 text-xs text-muted-foreground">GitHub CI cannot release payment by itself.</p>
-                  </div>
-                  {job.execution.assignment.independent_verifier.summary ? (
-                    <p className="md:col-span-3 text-sm text-muted-foreground">
-                      {job.execution.assignment.independent_verifier.summary}
-                    </p>
-                  ) : null}
-                  {job.execution.assignment.independent_verifier.failure_message ? (
-                    <p className="md:col-span-3 text-sm text-destructive">
-                      {job.execution.assignment.independent_verifier.failure_message}
-                    </p>
-                  ) : null}
-                </div>
-              ) : job.execution.assignment.status === "VERIFYING" ? (
-                <div className="md:col-span-3 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-                  GitHub CI is being checked and Veyra is reserving a separate verifier agent.
-                </div>
-              ) : null}
-              {job.execution.assignment.pull_request_url ? (
-                <a
-                  href={job.execution.assignment.pull_request_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="md:col-span-3 flex items-center justify-between rounded-xl border p-4 hover:border-primary/50"
-                >
-                  <span className="flex items-center gap-2 font-medium">
-                    <GitPullRequest className="h-4 w-4" /> Pull request #{job.execution.assignment.pull_request_number}
+              {assignment.status === "LEASED" || assignment.status === "EXECUTING" ? (
+                <Item label="Execution">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                    {executionProgress?.message || assignment.stage_label}
                   </span>
-                  <ExternalLink className="h-4 w-4" />
-                </a>
+                </Item>
               ) : null}
-              {job.execution.assignment.failure_message ? (
-                <div className="md:col-span-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                  {job.execution.assignment.failure_message}
-                </div>
-              ) : null}
-              {job.execution.assignment.failure_history.length ? (
-                <details className="md:col-span-3 rounded-xl border bg-muted/20 p-4 text-sm">
-                  <summary className="cursor-pointer font-medium">
-                    Recovered error history
-                  </summary>
-                  <div className="mt-3 space-y-3 text-muted-foreground">
-                    {job.execution.assignment.failure_history.map((entry, index) => (
-                      <div key={`${entry.source}-${entry.stage}-${index}`}>
-                        <p className="font-medium text-foreground">
-                          {entry.source}: {entry.stage || "transient error"}
-                        </p>
-                        <p>{entry.message}</p>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              ) : null}
-                </div>
-              </details>
-            </>
+
+              <Item label="Pull request">
+                {assignment.pull_request_url ? (
+                  <a
+                    href={assignment.pull_request_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-primary hover:underline"
+                  >
+                    <GitPullRequest className="h-3.5 w-3.5" />#
+                    {assignment.pull_request_number}
+                  </a>
+                ) : (
+                  <span className="text-muted-foreground">Not submitted yet</span>
+                )}
+              </Item>
+
+              <Item label="Verification result">
+                {verdict || verifier ? (
+                  <>
+                    <span className="block">{verificationLine(verdict, verifier?.summary)}</span>
+                    {verifierProgress?.message && !verdict ? (
+                      <span className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                        {verifierProgress.message}
+                      </span>
+                    ) : null}
+                    {verifier ? (
+                      <details className="mt-1.5">
+                        <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+                          View verification details
+                        </summary>
+                        <div className="mt-2 space-y-1.5 text-xs text-muted-foreground">
+                          <p>Reviewed independently by {verifier.agent.name}.</p>
+                          {verifier.summary ? <p>{verifier.summary}</p> : null}
+                          {verifier.failure_message ? (
+                            <p className="text-destructive">
+                              {verifier.failure_message}
+                            </p>
+                          ) : null}
+                        </div>
+                      </details>
+                    ) : null}
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">Pending</span>
+                )}
+              </Item>
+
+              <Item label="Payment">
+                {settled
+                  ? "Released to agent"
+                  : settlementPending
+                    ? "Settlement pending on Arc"
+                    : "Held in escrow"}
+              </Item>
+            </div>
           ) : (
-            <div
-              className={`rounded-xl border p-5 text-sm ${
-                job.execution.matching_status === "PAUSED"
-                  ? "border-destructive/30 bg-destructive/5 text-destructive"
-                  : job.execution.matching_status === "RETRYING"
-                    ? "border-amber-300 bg-amber-50 text-amber-900"
-                    : "border-dashed text-muted-foreground"
-              }`}
-            >
-              <p className="font-medium capitalize">
-                {job.execution.matching_status.replaceAll("_", " ").toLowerCase()}
-              </p>
-              <p className="mt-1">{job.execution.message}</p>
-              {job.execution.matching_reason_code ? (
-                <p className="mt-2 text-xs">
-                  Reason: {job.execution.matching_reason_code.replaceAll("_", " ")}
-                </p>
-              ) : null}
-              {job.execution.matching_next_retry_at ? (
-                <p className="mt-1 text-xs">
-                  Next automatic retry:{" "}
-                  {new Date(job.execution.matching_next_retry_at).toLocaleString()}
-                </p>
-              ) : null}
-              <p className="mt-2 text-xs">
-                Execution layer: {job.execution.controller.online ? "online" : "offline"}
-                {job.execution.controller.last_cycle_started_at
-                  ? ` · Last cycle ${new Date(job.execution.controller.last_cycle_started_at).toLocaleString()}`
-                  : ""}
-              </p>
-            </div>
+            <p className="mt-3 text-sm text-muted-foreground">
+              {job.execution.message}
+            </p>
           )}
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Completion Requirements</CardTitle>
-          </CardHeader>
-
-          <CardContent>
-            <ul className="grid gap-3">
-              {job.acceptance_criteria.map((criterion) => (
-                <li
-                  key={criterion}
-                  className="flex items-start gap-3 rounded-lg border p-3 text-sm"
-                >
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  <span>{criterion}</span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Job Details</CardTitle>
-          </CardHeader>
-
-          <CardContent className="grid gap-4 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-2 text-muted-foreground">
-                <CircleDollarSign className="h-4 w-4" />
-                Budget
-              </span>
-              <strong>{job.budget_usdc} USDC</strong>
-            </div>
-
-            <Separator />
-
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-2 text-muted-foreground">
-                <Calendar className="h-4 w-4" />
-                Deadline
-              </span>
-              <span>{new Date(job.expires_at * 1000).toLocaleString()}</span>
-            </div>
-
-            <Separator />
-
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-2 text-muted-foreground">
-                <ShieldCheck className="h-4 w-4" />
-                Network
-              </span>
-              <span>Arc Testnet</span>
-            </div>
-          </CardContent>
-        </Card>
+        </section>
       </div>
 
-      <details className="rounded-xl border bg-card p-5 shadow">
-        <summary className="cursor-pointer font-semibold">
+      {/* Closed by default: for support, not for reading a job. Omitted
+          entirely when there is nothing but the ID to show. */}
+      {hasTechnical ? (
+      <details className="rounded-lg border border-border bg-card">
+        <summary className="cursor-pointer px-4 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground">
           Technical details
         </summary>
-
-        <div className="mt-4 grid gap-3 text-sm">
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Onchain job ID</span>
-            <span className="font-mono">{job.onchain_job_id}</span>
-          </div>
-
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Contract status</span>
-            <span>{job.status}</span>
-          </div>
-
-          {job.commit_hash ? (
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Commit</span>
-              <span className="font-mono">{shortAddress(job.commit_hash)}</span>
-            </div>
+        <dl className="space-y-2 border-t border-border px-4 py-3 text-xs">
+          <Tech label="Onchain job ID" value={String(job.onchain_job_id)} />
+          <Tech label="Contract status" value={job.status} />
+          {assignment?.agent.wallet_address ? (
+            <Tech label="Agent wallet" value={assignment.agent.wallet_address} />
           ) : null}
-
+          {job.commit_hash ? <Tech label="Commit" value={job.commit_hash} /> : null}
           {job.report_hash ? (
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">
-                Verification report
-              </span>
-              <span className="max-w-[65%] truncate font-mono">
-                {job.report_hash}
-              </span>
-            </div>
+            <Tech label="Verification report" value={job.report_hash} />
           ) : null}
-
           {job.evidence_hash ? (
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Evidence</span>
-              <span className="max-w-[65%] truncate font-mono">
-                {job.evidence_hash}
-              </span>
-            </div>
+            <Tech label="Evidence" value={job.evidence_hash} />
           ) : null}
-        </div>
+          {assignment?.settlement_transaction_hash ? (
+            <Tech
+              label="Settlement transaction"
+              value={assignment.settlement_transaction_hash}
+            />
+          ) : null}
+          <Tech
+            label="Execution layer"
+            value={job.execution.controller.online ? "Online" : "Offline"}
+          />
+          {job.execution.matching_next_retry_at ? (
+            <Tech
+              label="Next retry"
+              value={new Date(job.execution.matching_next_retry_at).toLocaleString()}
+            />
+          ) : null}
+        </dl>
       </details>
+      ) : null}
     </div>
   );
+}
+
+/**
+ * Rewards are stored with full USDC precision, but "1.000000 USDC" reads
+ * like a machine field. Trailing zeros go; real decimals stay.
+ */
+function formatUsdc(amount: string | number) {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return String(amount);
+  return String(Number(value.toFixed(6)));
+}
+
+function isApproved(verdict: string) {
+  const normalized = verdict.toUpperCase();
+  return normalized.includes("APPROV") || normalized.includes("PASS");
+}
+
+function isRejected(verdict: string) {
+  const normalized = verdict.toUpperCase();
+  return normalized.includes("REJECT") || normalized.includes("FAIL");
+}
+
+/** One inline fact in the summary strip. */
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="text-sm font-medium text-foreground">{value}</dd>
+    </div>
+  );
+}
+
+/** Stacked label/value pair inside the Work summary. */
+function Item({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <div className="mt-0.5 text-sm text-foreground">{children}</div>
+    </div>
+  );
+}
+
+/** Monospace key/value line inside Technical details. */
+function Tech({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-6">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="break-all font-mono text-foreground sm:text-right">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * One readable sentence instead of a verdict code or the verifier's whole
+ * report. The report itself stays available under "View verification
+ * details" — nothing is discarded, only demoted.
+ */
+function verificationLine(verdict: string, summary?: string) {
+  if (isApproved(verdict)) return "Approved. All acceptance criteria passed.";
+  if (isRejected(verdict)) {
+    return "Rejected. The work did not meet the acceptance criteria.";
+  }
+  if (summary) return summary;
+  return titleCase(verdict || "Pending");
+}
+
+function VerdictBadge({ verdict }: { verdict: string }) {
+  const approved = isApproved(verdict);
+  const rejected = isRejected(verdict);
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+        approved
+          ? "border-primary/40 bg-primary/10 text-primary"
+          : rejected
+            ? "border-destructive/40 bg-destructive/10 text-destructive"
+            : "border-border text-muted-foreground"
+      }`}
+    >
+      {approved ? "Verified" : rejected ? "Rejected" : titleCase(verdict)}
+    </span>
+  );
+}
+
+/** "UNDER_REVIEW" reads as "Under review" for a non-engineer. */
+function titleCase(value: string) {
+  if (!value) return "—";
+  const text = value.replaceAll("_", " ").toLowerCase();
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

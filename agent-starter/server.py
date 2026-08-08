@@ -16,8 +16,10 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import traceback
 import uuid
+import signal
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,10 +62,10 @@ PUBLIC_PORT = os.getenv("RUNTIME_PUBLIC_PORT", str(PORT)).strip()
 RUNTIME_ROLE = os.getenv("VEYRA_RUNTIME_ROLE", "WORKER").strip().upper() or "WORKER"
 if RUNTIME_ROLE not in {"WORKER", "VERIFIER"}:
     raise RuntimeError("VEYRA_RUNTIME_ROLE must be WORKER or VERIFIER.")
-RUNTIME_VERSION = f"veyra-owner-runtime-{RUNTIME_ROLE.lower()}/1.1.3-git-path-parser"
+RUNTIME_VERSION = f"veyra-owner-runtime-{RUNTIME_ROLE.lower()}/1.2.0-multistack"
 PROTOCOL_VERSION = 1
 TOKEN_TTL_SECONDS = 24 * 60 * 60
-HEARTBEAT_SECONDS = max(5, int(os.getenv("VEYRA_HEARTBEAT_SECONDS", "10")))
+HEARTBEAT_SECONDS = max(2, int(os.getenv("VEYRA_HEARTBEAT_SECONDS", "5")))
 
 AI_PROVIDER = os.getenv("AI_PROVIDER", "aiand").strip()
 AI_MODEL = os.getenv("AI_MODEL", "zai-org/glm-5.2").strip()
@@ -128,10 +130,12 @@ def _new_state(public_key: str) -> dict[str, Any]:
         "job_assignment_attempt": 0,
         "job_onchain_id": "",
         "job_status": "waiting",
+        "job_phase": "",
         "job_message": "Waiting for paid work",
         "job_updated_at": "",
         "verification_assignment_id": "",
         "verification_status": "waiting",
+        "verification_phase": "",
         "verification_message": "Waiting for a submitted worker job",
         "verification_updated_at": "",
     }
@@ -466,6 +470,41 @@ def _safe_runtime_text(value: Any, *, limit: int = 12000) -> str:
     return text[:limit]
 
 
+def _safe_path(value: Any) -> str:
+    """Normalize one untrusted path to canonical repository-relative POSIX form."""
+    raw_path = str(value or "").strip()
+    path = raw_path.replace("\\", "/")
+    if (
+        not path
+        or "\x00" in path
+        or path.startswith("/")
+        or re.match(r"^[A-Za-z]:", path)
+    ):
+        raise RuntimeError("The job attempted to use an unsafe repository path.")
+    parts: list[str] = []
+    for part in path.split("/"):
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            raise RuntimeError("The job attempted to use an unsafe repository path.")
+        parts.append(part)
+    if not parts:
+        raise RuntimeError("The job attempted to use an unsafe repository path.")
+    return "/".join(parts)
+
+
+def _protected_path(path: str) -> bool:
+    selected = _safe_path(path)
+    parts = [part.casefold() for part in selected.split("/")]
+    basename = parts[-1]
+    return (
+        basename == ".env"
+        or basename.startswith(".env.")
+        or ".git" in parts
+        or parts[:2] == [".github", "workflows"]
+    )
+
+
 def _qualification_workspace(qualification_id: str) -> Path:
     safe_id = re.sub(r"[^A-Za-z0-9_.-]", "", qualification_id)[:80]
     return WORKSPACE_ROOT / "qualification" / safe_id
@@ -476,8 +515,11 @@ def _write_starter_files(workspace: Path, files: list[dict[str, Any]]) -> None:
         _remove_workspace(workspace, strict=True)
     workspace.mkdir(parents=True, exist_ok=True)
     for item in files:
-        path = str(item.get("path") or "").replace("\\", "/").strip().lstrip("/")
-        if not path or ".." in Path(path).parts or path.startswith(".git/"):
+        try:
+            path = _safe_path(item.get("path"))
+        except RuntimeError as exc:
+            raise RuntimeError("Veyra sent an unsafe qualification file path.") from exc
+        if _protected_path(path):
             raise RuntimeError("Veyra sent an unsafe qualification file path.")
         destination = (workspace / path).resolve()
         if workspace.resolve() not in destination.parents:
@@ -486,44 +528,270 @@ def _write_starter_files(workspace: Path, files: list[dict[str, Any]]) -> None:
         destination.write_text(str(item.get("content") or ""), encoding="utf-8")
 
 
+def _preview(text: str, limit: int = 200) -> str:
+    """First `limit` characters of an upstream body, for diagnosis only.
+
+    Model output and provider errors are not credentials, but they are
+    untrusted text, so this collapses whitespace and hard-truncates rather
+    than pasting an arbitrarily long body into a failure message.
+    """
+    collapsed = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[:limit] + "…"
+
+
+def _escape_json_string_control_characters(value: str) -> str:
+    """Escape literal control characters only while inside JSON strings.
+
+    Models sometimes place multiline source directly in a JSON string instead
+    of encoding its newlines. This scanner repairs that narrow violation while
+    preserving structural whitespace and every non-control character.
+    """
+    escapes = {
+        "\b": "\\b",
+        "\t": "\\t",
+        "\n": "\\n",
+        "\f": "\\f",
+        "\r": "\\r",
+    }
+    output: list[str] = []
+    in_string = False
+    escaped = False
+    for character in value:
+        if not in_string:
+            output.append(character)
+            if character == '"':
+                in_string = True
+            continue
+
+        if escaped:
+            output.append(character)
+            escaped = False
+        elif character == "\\":
+            output.append(character)
+            escaped = True
+        elif character == '"':
+            output.append(character)
+            in_string = False
+        elif ord(character) < 0x20:
+            output.append(escapes.get(character, f"\\u{ord(character):04x}"))
+        else:
+            output.append(character)
+    return "".join(output)
+
+
+def _load_model_json(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        if exc.msg != "Invalid control character at":
+            raise
+        repaired = _escape_json_string_control_characters(value)
+        if repaired == value:
+            raise
+        return json.loads(repaired)
+
+
 def _extract_json_object(value: str) -> dict[str, Any]:
+    """Parse the JSON object an AI model was asked to return.
+
+    A model can stop mid-token when it hits a length cap, so the text may be
+    a *prefix* of valid JSON such as `{"summary":`. The brace-slice fallback
+    below used to call json.loads() unguarded, which let a raw
+    `Expecting value: line 1 column 12 (char 11)` escape all the way to the
+    job detail page. Every parse here is guarded and reported as a Veyra
+    error that says what was wrong and shows a short excerpt.
+    """
     text = str(value or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
         text = re.sub(r"\s*```$", "", text)
+
+    if not text:
+        raise RuntimeError(
+            "The AI model returned an empty response instead of the required JSON result."
+        )
+
     try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
+        payload = _load_model_json(text)
+    except json.JSONDecodeError as initial_exc:
         start = text.find("{")
         end = text.rfind("}")
         if start < 0 or end <= start:
-            raise RuntimeError("The AI model did not return the required JSON result.")
-        payload = json.loads(text[start : end + 1])
+            raise RuntimeError(
+                "The AI model returned malformed or incomplete JSON, so Veyra could not "
+                f"read the result. Parser reported: {initial_exc.msg}. "
+                f"Response began: {_preview(text)}"
+            ) from initial_exc
+        try:
+            payload = _load_model_json(text[start : end + 1])
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "The AI model returned malformed JSON, so Veyra could not read the result. "
+                f"Parser reported: {exc.msg}. Response began: {_preview(text)}"
+            ) from exc
+
     if not isinstance(payload, dict):
-        raise RuntimeError("The AI model returned an invalid qualification result.")
+        raise RuntimeError(
+            "The AI model returned "
+            f"{type(payload).__name__} instead of a JSON object. "
+            f"Response began: {_preview(text)}"
+        )
     return payload
+
+
+def _response_json(response: Any, source: str) -> Any:
+    """Read a JSON body from an upstream HTTP response, defensively.
+
+    Checks status, then an empty body, then Content-Type, before parsing.
+    Providers answer with HTML error pages, proxy timeouts and plain-text
+    rate-limit notices, and calling .json() on any of those raises a bare
+    JSONDecodeError that means nothing to the person reading the job page.
+    """
+    status = int(getattr(response, "status_code", 0) or 0)
+    raw_body = getattr(response, "text", None)
+    body = raw_body if isinstance(raw_body, str) else None
+
+    if status >= 400:
+        raise RuntimeError(
+            f"{source} returned {status}. Response began: {_preview(body or '')}"
+        )
+
+    if body is not None:
+        if not body.strip():
+            raise RuntimeError(
+                f"{source} returned an empty response with status {status}."
+            )
+
+        headers = getattr(response, "headers", None)
+        get_header = getattr(headers, "get", None)
+        header_value = get_header("content-type", "") if callable(get_header) else ""
+        content_type = header_value.lower() if isinstance(header_value, str) else ""
+        if content_type and "json" not in content_type:
+            raise RuntimeError(
+                f"{source} returned {content_type.split(';')[0]} instead of JSON "
+                f"(status {status}). Response began: {_preview(body)}"
+            )
+
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"{source} returned a response Veyra could not read as JSON "
+                f"(status {status}). Parser reported: {exc.msg}. "
+                f"Response began: {_preview(body)}"
+            ) from exc
+
+    # A few unit-test doubles expose only response.json(). Real httpx
+    # responses always take the stricter text/content-type branch above.
+    try:
+        return response.json()
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"{source} returned a response Veyra could not read as JSON "
+            f"(status {status})."
+        ) from exc
+
+
+def _post_ai_json(
+    payload: dict[str, Any],
+    *,
+    source: str,
+    timeout: int,
+) -> Any:
+    """Post one AI request with a bounded retry for transport failures only.
+
+    This retry remains inside the current runtime step and therefore does not
+    create a new Veyra assignment, lease, claim, or funding transaction.
+    Provider HTTP responses and malformed model output still follow their
+    existing validation and repair paths.
+    """
+    attempts = max(
+        1,
+        min(3, int(os.getenv("VEYRA_MODEL_TRANSPORT_ATTEMPTS", "2"))),
+    )
+    delay_seconds = max(
+        0.0,
+        min(10.0, float(os.getenv("VEYRA_MODEL_TRANSPORT_RETRY_DELAY_SECONDS", "1"))),
+    )
+    for attempt in range(1, attempts + 1):
+        try:
+            response = httpx.post(
+                f"{AI_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {AI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=timeout,
+                follow_redirects=False,
+            )
+        except httpx.TransportError as exc:
+            if attempt >= attempts:
+                raise RuntimeError(
+                    f"{source} request failed after {attempts} transport attempt(s): "
+                    f"{_preview(str(exc)) or type(exc).__name__}."
+                ) from exc
+            if delay_seconds:
+                time.sleep(delay_seconds)
+            continue
+        return _response_json(response, source)
+    raise RuntimeError(f"{source} request did not produce a response.")
+
+
+def _qualification_target(task: dict[str, Any]) -> str:
+    raw_allowed = task.get("allowed_submission_paths")
+    allowed = list(raw_allowed) if isinstance(raw_allowed, list) else []
+    if len(allowed) != 1:
+        raise RuntimeError(
+            "Veyra qualification must declare exactly one controlled submission path."
+        )
+    target = _safe_path(task.get("qualification_target_path"))
+    allowed_target = _safe_path(allowed[0])
+    if target != allowed_target:
+        raise RuntimeError(
+            "Veyra qualification target does not match its controlled submission path."
+        )
+    if _protected_path(target):
+        raise RuntimeError("Veyra qualification target is a protected path.")
+    starter_paths = [
+        _safe_path(item.get("path"))
+        for item in list(task.get("starter_files") or [])
+        if isinstance(item, dict)
+    ]
+    if starter_paths.count(target) != 1:
+        raise RuntimeError(
+            "Veyra qualification target is not present exactly once in the controlled workspace."
+        )
+    return target
 
 
 def _run_owner_model(task: dict[str, Any]) -> list[dict[str, str]]:
     if not AI_API_KEY or AI_API_KEY == "PASTE_OWNER_PAID_KEY_HERE":
         raise RuntimeError("The owner-paid AI_API_KEY is not configured.")
 
+    target_path = _qualification_target(task)
     starter = task.get("starter_files") or []
     prompt = (
         "You are completing a controlled Veyra coding qualification. "
         "Return JSON only, with this exact shape: "
-        '{"files":[{"path":"app.py","content":"complete Python source"}]}.\n\n'
+        + json.dumps(
+            {
+                "files": [
+                    {"path": target_path, "content": "complete replacement source"}
+                ]
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + ". Return exactly the controlled target path shown; do not add files.\n\n"
         + str(task.get("instructions") or "")
         + "\n\nStarter files:\n"
         + json.dumps(starter, ensure_ascii=False, indent=2)
     )
-    response = httpx.post(
-        f"{AI_BASE_URL}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {AI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
+    payload = _post_ai_json(
+        {
             "model": AI_MODEL,
             "messages": [
                 {
@@ -536,14 +804,9 @@ def _run_owner_model(task: dict[str, Any]) -> list[dict[str, str]]:
             ],
             "temperature": 0.1,
         },
+        source="The owner AI provider",
         timeout=120,
-        follow_redirects=False,
     )
-    if response.status_code != 200:
-        raise RuntimeError(
-            f"The owner AI provider returned {response.status_code}."
-        )
-    payload = response.json()
     choices = payload.get("choices") if isinstance(payload, dict) else None
     if not isinstance(choices, list) or not choices:
         raise RuntimeError("The AI provider returned no qualification answer.")
@@ -558,12 +821,12 @@ def _run_owner_model(task: dict[str, Any]) -> list[dict[str, str]]:
     for item in files:
         if not isinstance(item, dict):
             continue
-        path = str(item.get("path") or "").replace("\\", "/").strip().lstrip("/")
+        path = _safe_path(item.get("path"))
         content = str(item.get("content") or "")
-        if path == "app.py":
+        if path == target_path:
             cleaned.append({"path": path, "content": content})
-    if [item["path"] for item in cleaned] != ["app.py"]:
-        raise RuntimeError("The AI model must return app.py only.")
+    if [item["path"] for item in cleaned] != [target_path]:
+        raise RuntimeError(f"The AI model must return {target_path} only.")
     return cleaned
 
 
@@ -658,23 +921,15 @@ def run_qualification_task(task: dict[str, Any]) -> None:
         for item in files:
             (workspace / item["path"]).write_text(item["content"], encoding="utf-8")
 
-        command = [sys.executable, "-m", "pytest", "-q"]
-        completed = subprocess.run(
+        test_command = str(task.get("test_command") or "").strip()
+        if not test_command:
+            raise RuntimeError("Veyra qualification supplied no validation command.")
+        command = _command_args(test_command)
+        _require_command_tool(command, workspace)
+        completed = _run_process(
             command,
             cwd=workspace,
-            capture_output=True,
-            text=True,
             timeout=120,
-            env={
-                "PATH": os.environ.get("PATH", ""),
-                "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
-                "TEMP": os.environ.get("TEMP", ""),
-                "TMP": os.environ.get("TMP", ""),
-                "USERPROFILE": os.environ.get("USERPROFILE", ""),
-                "PYTHONIOENCODING": "utf-8",
-                "PYTHONDONTWRITEBYTECODE": "1",
-            },
-            check=False,
         )
         output = "\n".join(
             part for part in (completed.stdout, completed.stderr) if part
@@ -812,22 +1067,28 @@ def _remove_workspace(workspace: Path, *, strict: bool = False) -> bool:
     return False
 
 
-def _safe_path(value: Any) -> str:
-    path = str(value or "").replace("\\", "/").strip().lstrip("/")
-    if not path or ".." in Path(path).parts or path.startswith(".git/"):
-        raise RuntimeError("The job attempted to use an unsafe repository path.")
-    return path
+class ModelOutputRepairError(RuntimeError):
+    """The model response cannot be applied and should receive bounded repair feedback."""
 
 
-class ModelOutputPolicyError(RuntimeError):
+class ModelOutputPolicyError(ModelOutputRepairError):
     """The model proposed a file path that violates the funded job policy."""
+
+
+class RuntimePreflightError(RuntimeError):
+    """The leased repository could not be prepared for funded validation."""
+
+    def __init__(self, message: str, *, code: str = "RUNTIME_PREFLIGHT_FAILED"):
+        super().__init__(message)
+        self.code = code
 
 
 def _path_matches_policy_rule(path: str, rule: str) -> bool:
     """Match exact paths, directory prefixes, and common recursive globs safely."""
-    clean_path = path.replace("\\", "/").casefold().strip("/")
-    clean_rule = rule.replace("\\", "/").casefold().strip("/")
-    if not clean_path or not clean_rule:
+    try:
+        clean_path = _safe_path(path).casefold()
+        clean_rule = _safe_path(rule).casefold()
+    except RuntimeError:
         return False
     if clean_rule.endswith("/**"):
         prefix = clean_rule[:-3].rstrip("/")
@@ -915,10 +1176,15 @@ def _run_process(
         )
         if os.environ.get(key)
     }
+    runtime_home = cwd.parent / f".{cwd.name}--runtime"
+    runtime_home.mkdir(parents=True, exist_ok=True)
     env.update(
         {
-            "HOME": str(cwd),
-            "USERPROFILE": str(cwd),
+            "HOME": str(runtime_home),
+            "USERPROFILE": str(runtime_home),
+            "GOCACHE": str(runtime_home / "go-build"),
+            "GOMODCACHE": str(runtime_home / "go-mod"),
+            "npm_config_cache": str(runtime_home / "npm-cache"),
             "PYTHONIOENCODING": "utf-8",
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONNOUSERSITE": "1",
@@ -928,16 +1194,378 @@ def _run_process(
     )
     if extra_env:
         env.update(extra_env)
-    completed = subprocess.run(
+    process = subprocess.Popen(
         args,
         cwd=cwd,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout,
         env=env,
-        check=False,
+        start_new_session=os.name != "nt",
+        creationflags=(
+            subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        ),
     )
-    return completed
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+        stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(
+            args,
+            timeout,
+            output=stdout,
+            stderr=stderr,
+        ) from exc
+    return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+
+
+def _job_python_environment(workspace: Path) -> Path:
+    """Keep installed dependencies outside the Git worktree and scoped to one lease."""
+    return workspace.parent / f".{workspace.name}--python"
+
+
+def _python_environment_executable(environment: Path) -> Path:
+    if os.name == "nt":
+        return environment / "Scripts" / "python.exe"
+    return environment / "bin" / "python"
+
+
+def _explicit_validation_commands(task: dict[str, Any]) -> list[str]:
+    policy = task.get("policy") if isinstance(task.get("policy"), dict) else {}
+    return [
+        str(value).strip()
+        for value in list(policy.get("required_commands") or [])
+        if str(value).strip()
+    ]
+
+
+def _package_json(workspace: Path) -> dict[str, Any]:
+    path = workspace / "package.json"
+    if not path.is_file():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimePreflightError(
+            "package.json is present but invalid, so validation cannot be selected.",
+            code="INVALID_PROJECT_MANIFEST",
+        ) from exc
+    if not isinstance(value, dict):
+        raise RuntimePreflightError(
+            "package.json must contain a JSON object.",
+            code="INVALID_PROJECT_MANIFEST",
+        )
+    return value
+
+
+def _node_package_manager(workspace: Path) -> str:
+    if (workspace / "pnpm-lock.yaml").is_file():
+        return "pnpm"
+    if (workspace / "yarn.lock").is_file():
+        return "yarn"
+    return "npm"
+
+
+def _wrapper_or_tool(
+    workspace: Path,
+    *,
+    unix_name: str,
+    windows_name: str,
+    tool: str,
+) -> str:
+    if os.name == "nt" and (workspace / windows_name).is_file():
+        return windows_name
+    if (workspace / unix_name).is_file():
+        return f"./{unix_name}"
+    return tool
+
+
+def _detect_validation_plan(workspace: Path) -> dict[str, Any]:
+    """Infer one validation plan from repository-owned manifests and config."""
+    package = _package_json(workspace)
+    dependencies = {
+        str(key).casefold()
+        for section in ("dependencies", "devDependencies", "peerDependencies")
+        if isinstance(package.get(section), dict)
+        for key in package[section]
+    }
+    scripts = package.get("scripts") if isinstance(package.get("scripts"), dict) else {}
+    hardhat = any(workspace.glob("hardhat.config.*")) or "hardhat" in dependencies
+
+    candidates: list[dict[str, Any]] = []
+    if (workspace / "foundry.toml").is_file():
+        candidates.append({"stack": "foundry", "commands": ["forge test -q"]})
+    if hardhat:
+        manager = _node_package_manager(workspace)
+        command = (
+            f"{manager} test"
+            if str(scripts.get("test") or "").strip()
+            else "npx --no-install hardhat test"
+        )
+        candidates.append({"stack": "hardhat", "commands": [command]})
+    elif package:
+        if str(scripts.get("test") or "").strip():
+            candidates.append(
+                {
+                    "stack": "node",
+                    "commands": [f"{_node_package_manager(workspace)} test"],
+                }
+            )
+    if (workspace / "Cargo.toml").is_file():
+        candidates.append({"stack": "rust", "commands": ["cargo test --quiet"]})
+    if (workspace / "go.mod").is_file():
+        candidates.append({"stack": "go", "commands": ["go test ./..."]})
+    if (workspace / "pom.xml").is_file():
+        tool = _wrapper_or_tool(
+            workspace,
+            unix_name="mvnw",
+            windows_name="mvnw.cmd",
+            tool="mvn",
+        )
+        candidates.append({"stack": "maven", "commands": [f"{tool} test"]})
+    if any((workspace / name).is_file() for name in ("build.gradle", "build.gradle.kts")):
+        tool = _wrapper_or_tool(
+            workspace,
+            unix_name="gradlew",
+            windows_name="gradlew.bat",
+            tool="gradle",
+        )
+        candidates.append({"stack": "gradle", "commands": [f"{tool} test"]})
+    if (workspace / "composer.json").is_file():
+        try:
+            composer = json.loads((workspace / "composer.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimePreflightError(
+                "composer.json is present but invalid, so validation cannot be selected.",
+                code="INVALID_PROJECT_MANIFEST",
+            ) from exc
+        composer_scripts = composer.get("scripts") if isinstance(composer, dict) else {}
+        command = "composer test" if isinstance(composer_scripts, dict) and composer_scripts.get("test") else "php vendor/bin/phpunit"
+        if (workspace / "phpunit.xml").is_file() or (workspace / "phpunit.xml.dist").is_file() or command == "composer test":
+            candidates.append({"stack": "php", "commands": [command]})
+    if (workspace / "Gemfile").is_file():
+        if (workspace / "Rakefile").is_file():
+            command = "bundle exec rake test"
+        elif (workspace / ".rspec").is_file() or (workspace / "spec").is_dir():
+            command = "bundle exec rspec"
+        else:
+            command = ""
+        if command:
+            candidates.append({"stack": "ruby", "commands": [command]})
+
+    python_markers = any(
+        (workspace / name).is_file()
+        for name in ("pyproject.toml", "requirements.txt", "setup.py", "pytest.ini", "tox.ini")
+    )
+    python_tests = any((workspace / "tests").glob("test*.py")) if (workspace / "tests").is_dir() else False
+    if python_markers or python_tests:
+        command = "python -m pytest -q" if python_tests or (workspace / "pytest.ini").is_file() else "python -m unittest discover -v"
+        candidates.append({"stack": "python", "commands": [command]})
+
+    if not candidates:
+        raise RuntimePreflightError(
+            "No supported validation toolchain was detected from repository manifests or test configuration.",
+            code="UNSUPPORTED_TOOLCHAIN",
+        )
+    stacks = sorted({candidate["stack"] for candidate in candidates})
+    if len(stacks) != 1:
+        raise RuntimePreflightError(
+            "Multiple validation toolchains were detected without explicit funded commands: "
+            + ", ".join(stacks)
+            + ".",
+            code="AMBIGUOUS_TOOLCHAIN",
+        )
+    return {**candidates[0], "source": "repository_detection"}
+
+
+def _validation_plan(task: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    explicit = _explicit_validation_commands(task)
+    if explicit:
+        stacks = {
+            _command_stack(command)
+            for command in explicit
+            if _command_stack(command)
+        }
+        stack = stacks.pop() if len(stacks) == 1 else "explicit"
+        return {"stack": stack, "commands": explicit, "source": "funded_policy"}
+    return _detect_validation_plan(workspace)
+
+
+def _validation_commands(task: dict[str, Any], workspace: Path | None = None) -> list[str]:
+    explicit = _explicit_validation_commands(task)
+    if explicit:
+        return explicit
+    if workspace is None:
+        raise RuntimePreflightError(
+            "Repository evidence is required when funded validation commands are absent.",
+            code="VALIDATION_CONTEXT_REQUIRED",
+        )
+    return list(_detect_validation_plan(workspace)["commands"])
+
+
+def _uses_python_validation(task: dict[str, Any], workspace: Path) -> bool:
+    for command in _validation_commands(task, workspace):
+        args = shlex.split(command, posix=os.name != "nt")
+        if args and Path(args[0]).name.casefold() in {"python", "python3", "pytest"}:
+            return True
+    return False
+
+
+def _preflight_output(completed: subprocess.CompletedProcess[str]) -> str:
+    return _safe_runtime_text(
+        "\n".join(
+            part for part in (completed.stdout, completed.stderr) if part
+        ).strip(),
+        limit=4000,
+    )
+
+
+def _pyproject_dependencies(pyproject: Path) -> list[str]:
+    try:
+        metadata = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise RuntimePreflightError(
+            f"The declared pyproject.toml could not be read: {exc}"
+        ) from exc
+    project = metadata.get("project")
+    if not isinstance(project, dict):
+        return []
+    dependencies = [
+        str(value).strip()
+        for value in list(project.get("dependencies") or [])
+        if str(value).strip()
+    ]
+    optional = project.get("optional-dependencies")
+    if isinstance(optional, dict):
+        dependencies.extend(
+            str(value).strip()
+            for value in list(optional.get("test") or [])
+            if str(value).strip()
+        )
+    return dependencies
+
+
+def _prepare_validation_environment(
+    task: dict[str, Any],
+    workspace: Path,
+    environment: Path,
+) -> tuple[Path, str, str]:
+    """Prepare declared dependencies for the selected repository toolchain."""
+    plan = _validation_plan(task, workspace)
+    requirements = workspace / "requirements.txt"
+    pyproject = workspace / "pyproject.toml"
+    uses_python = _uses_python_validation(task, workspace)
+    if not uses_python:
+        stack = str(plan["stack"])
+        preparation: list[str] = []
+        if stack in {"node", "hardhat"} or (stack == "explicit" and (workspace / "package.json").is_file()):
+            manager = _node_package_manager(workspace)
+            if manager == "pnpm":
+                preparation = ["pnpm install --frozen-lockfile"]
+            elif manager == "yarn":
+                preparation = ["yarn install --immutable"]
+            elif (workspace / "package-lock.json").is_file():
+                preparation = ["npm ci"]
+            else:
+                preparation = ["npm install --no-package-lock"]
+        elif stack == "rust":
+            preparation = ["cargo fetch" + (" --locked" if (workspace / "Cargo.lock").is_file() else "")]
+        elif stack == "go":
+            preparation = ["go mod download"]
+        elif stack == "php":
+            preparation = ["composer install --no-interaction --prefer-dist"]
+        elif stack == "ruby":
+            preparation = ["bundle install"]
+        if not preparation:
+            return Path(sys.executable), "", ""
+        command = preparation[0]
+        args = _command_args(command, preparation=True)
+        _require_command_tool(args, workspace)
+        completed = _run_process(
+            args,
+            cwd=workspace,
+            timeout=max(180, int((task.get("policy") or {}).get("maximum_execution_minutes") or 45) * 60),
+        )
+        output = _preflight_output(completed)
+        if completed.returncode != 0:
+            raise RuntimePreflightError(
+                f"{stack} dependency preparation failed: {output}",
+                code="DEPENDENCY_PREPARATION_FAILED",
+            )
+        return Path(sys.executable), output, command
+
+    if not (requirements.is_file() or pyproject.is_file()):
+        return Path(sys.executable), "", ""
+
+    _remove_workspace(environment, strict=True)
+    environment.parent.mkdir(parents=True, exist_ok=True)
+    create = _run_process(
+        [sys.executable, "-m", "venv", str(environment)],
+        cwd=workspace,
+        timeout=180,
+    )
+    if create.returncode != 0:
+        raise RuntimePreflightError(
+            "Python environment creation failed before funded validation: "
+            + _preflight_output(create),
+            code="DEPENDENCY_PREPARATION_FAILED",
+        )
+
+    python_executable = _python_environment_executable(environment)
+    if not python_executable.is_file():
+        raise RuntimePreflightError(
+            "Python environment creation completed without a usable interpreter.",
+            code="DEPENDENCY_PREPARATION_FAILED",
+        )
+
+    if requirements.is_file():
+        install_args = ["-r", "requirements.txt"]
+        display_command = "python -m pip install -r requirements.txt"
+    else:
+        install_args = _pyproject_dependencies(pyproject)
+        if not install_args:
+            return python_executable, "", ""
+        display_command = "python -m pip install <declared pyproject dependencies>"
+
+    install = _run_process(
+        [
+            str(python_executable),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-input",
+            *install_args,
+        ],
+        cwd=workspace,
+        timeout=max(
+            180,
+            int((task.get("policy") or {}).get("maximum_execution_minutes") or 45)
+            * 60,
+        ),
+        extra_env={
+            "PIP_CONFIG_FILE": os.devnull,
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+            "PIP_NO_INPUT": "1",
+            "PIP_REQUIRE_VIRTUALENV": "1",
+        },
+    )
+    output = _preflight_output(install)
+    if install.returncode != 0:
+        raise RuntimePreflightError(
+            f"Declared dependency installation failed before funded validation: {output}",
+            code="DEPENDENCY_PREPARATION_FAILED",
+        )
+    return python_executable, output, display_command
 
 
 def _git(
@@ -985,30 +1613,109 @@ def _repository_credential(task: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+REPOSITORY_EXCLUDED_PARTS = {
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".next",
+}
+
+
+def _repository_paths(workspace: Path) -> list[str]:
+    """Enumerate existing regular files using canonical repository-relative paths."""
+    root = workspace.resolve()
+    result: list[str] = []
+    for candidate in workspace.rglob("*"):
+        try:
+            relative = _safe_path(candidate.relative_to(workspace).as_posix())
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if any(
+            part.casefold() in REPOSITORY_EXCLUDED_PARTS
+            for part in relative.split("/")
+        ):
+            continue
+        try:
+            resolved = candidate.resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if not candidate.is_file() or candidate.is_symlink():
+            continue
+        if root not in resolved.parents:
+            continue
+        result.append(relative)
+    return sorted(set(result), key=lambda value: (value.casefold(), value))
+
+
+def _resolve_funded_repository_path(
+    value: Any,
+    repository_paths: list[str],
+) -> str:
+    """Resolve an untrusted spelling to one existing canonical repository path."""
+    try:
+        selected = _safe_path(value)
+    except RuntimeError as exc:
+        raise ModelOutputPolicyError(str(exc)) from exc
+    available = [_safe_path(path) for path in repository_paths]
+    if selected in available:
+        return selected
+    folded_matches = [
+        path for path in available if path.casefold() == selected.casefold()
+    ]
+    if len(folded_matches) != 1:
+        raise ModelOutputPolicyError(
+            f"The AI model returned an unknown funded repository path: {selected}"
+        )
+    return folded_matches[0]
+
+
 def _repository_context(workspace: Path) -> list[dict[str, str]]:
-    allowed_suffixes = {
-        ".py", ".js", ".jsx", ".ts", ".tsx", ".json", ".toml", ".yaml", ".yml",
-        ".md", ".html", ".css", ".sql", ".txt",
-    }
-    excluded_parts = {".git", "node_modules", ".venv", "venv", "dist", "build", ".next"}
     maximum = max(20_000, int(os.getenv("VEYRA_MODEL_CONTEXT_CHARACTERS", "180000")))
     total = 0
     result: list[dict[str, str]] = []
-    for path in sorted(workspace.rglob("*")):
-        if not path.is_file() or any(part in excluded_parts for part in path.relative_to(workspace).parts):
+    for relative in _repository_paths(workspace):
+        basename = relative.rsplit("/", 1)[-1].casefold()
+        if basename == ".env" or basename.startswith(".env."):
             continue
-        if path.suffix.casefold() not in allowed_suffixes and path.name not in {"Dockerfile", "Makefile"}:
-            continue
+        path = workspace.joinpath(*relative.split("/"))
         try:
             content = path.read_text(encoding="utf-8")
         except Exception:
+            continue
+        if "\x00" in content:
             continue
         if len(content) > 40_000:
             content = content[:40_000]
         if total + len(content) > maximum:
             break
         total += len(content)
-        result.append({"path": path.relative_to(workspace).as_posix(), "content": content})
+        result.append({"path": relative, "content": content})
+    return result
+
+
+def _trusted_model_paths(
+    allowed_paths: list[str],
+    repository_paths: list[str],
+) -> list[str]:
+    """Return exact funded paths that can be represented by opaque model IDs."""
+    normalized_allowed = [_safe_path(path) for path in allowed_paths]
+    normalized_repository = [_safe_path(path) for path in repository_paths]
+    permitted_repository_paths = [
+        path
+        for path in normalized_repository
+        if not normalized_allowed
+        or any(_path_matches_policy_rule(path, rule) for rule in normalized_allowed)
+    ]
+    result: list[str] = []
+    seen: set[str] = set()
+    for path in permitted_repository_paths:
+        key = path.casefold()
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
     return result
 
 
@@ -1017,10 +1724,16 @@ def _extract_model_files(
     *,
     path_ids: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], str]:
-    payload = _extract_json_object(content)
+    try:
+        payload = _extract_json_object(content)
+    except RuntimeError as exc:
+        raise ModelOutputRepairError(str(exc)) from exc
     values = payload.get("files")
     if not isinstance(values, list) or not values:
-        raise RuntimeError("The AI model returned no changed files.")
+        raise ModelOutputRepairError(
+            "The AI model returned no changed files. Return at least one complete file "
+            "in the JSON files array."
+        )
     files: list[dict[str, str]] = []
     seen: set[str] = set()
     for item in values:
@@ -1030,11 +1743,23 @@ def _extract_model_files(
         if path_id:
             mapped_path = (path_ids or {}).get(path_id)
             if not mapped_path:
+                # Some models copy the trusted filename value into path_id
+                # instead of its FILE_n key. Exact values remain confined to
+                # the same funded-path allowlist; near misses are rejected.
+                try:
+                    mapped_path = _resolve_funded_repository_path(
+                        path_id,
+                        list((path_ids or {}).values()),
+                    )
+                except ModelOutputPolicyError:
+                    mapped_path = None
+            if not mapped_path:
                 raise ModelOutputPolicyError(
                     f"The AI model returned an unknown funded path ID: {path_id}"
                 )
+            mapped_path = _safe_path(mapped_path)
             supplied_path = str(item.get("path") or "").strip()
-            if supplied_path and _safe_path(supplied_path) != mapped_path:
+            if supplied_path and _safe_path(supplied_path).casefold() != mapped_path.casefold():
                 raise ModelOutputPolicyError(
                     f"The AI model returned conflicting path and path_id values: {supplied_path}"
                 )
@@ -1046,7 +1771,10 @@ def _extract_model_files(
         seen.add(path.casefold())
         files.append({"path": path, "content": str(item.get("content") or "")})
     if not files:
-        raise RuntimeError("The AI model returned no valid changed files.")
+        raise ModelOutputRepairError(
+            "The AI model returned no valid changed files. Return at least one complete "
+            "file with a valid funded path."
+        )
     return files, str(payload.get("summary") or "Completed the requested changes.")[:2000]
 
 
@@ -1066,13 +1794,14 @@ def _run_job_model(
         if str(value or "").strip()
     ]
     allowed_path_contract = json.dumps(allowed_paths, ensure_ascii=False)
+    context = _repository_context(workspace)
+    repository_paths = _repository_paths(workspace)
+    trusted_paths = _trusted_model_paths(allowed_paths, repository_paths)
     path_ids = {
         f"FILE_{index}": path
-        for index, path in enumerate(allowed_paths, start=1)
-        if not any(marker in path for marker in ("*", "?", "["))
+        for index, path in enumerate(trusted_paths, start=1)
     }
     path_id_contract = json.dumps(path_ids, ensure_ascii=False)
-    context = _repository_context(workspace)
     repair = (
         "\n\nThe previous attempt was rejected or failed. Correct the JSON/code using "
         "this sanitized feedback. Do not repeat an invalid path:\n"
@@ -1102,10 +1831,8 @@ def _run_job_model(
         f"Repository files: {json.dumps(context, ensure_ascii=False)}"
         + repair
     )
-    response = httpx.post(
-        f"{AI_BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
-        json={
+    payload = _post_ai_json(
+        {
             "model": AI_MODEL,
             "messages": [
                 {
@@ -1114,20 +1841,17 @@ def _run_job_model(
                         "Return only valid JSON with complete changed files. "
                         f"Use these trusted path IDs instead of spelling filenames: "
                         f"{path_id_contract}. "
-                        f"Valid files[*].path values are restricted to this exact JSON array: "
-                        f"{allowed_path_contract}. Any other path makes the answer invalid."
+                        f"Funded allowed-path rules are: {allowed_path_contract}. "
+                        "Any explicit path must satisfy those rules and the protected-path policy."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0,
         },
+        source="The owner AI provider",
         timeout=max(120, int(os.getenv("VEYRA_MODEL_TIMEOUT_SECONDS", "240"))),
-        follow_redirects=False,
     )
-    if response.status_code != 200:
-        raise RuntimeError(f"The owner AI provider returned {response.status_code}.")
-    payload = response.json()
     choices = payload.get("choices") if isinstance(payload, dict) else None
     message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
     content = message.get("content") if isinstance(message, dict) else ""
@@ -1137,13 +1861,15 @@ def _run_job_model(
 def _apply_model_files(task: dict[str, Any], workspace: Path, files: list[dict[str, str]]) -> None:
     paths = [item["path"] for item in files]
     _enforce_job_path_policy(task, paths)
+    repository_paths = _repository_paths(workspace)
     root = workspace.resolve()
     for item in files:
-        destination = (workspace / item["path"]).resolve()
+        repository_path = _resolve_funded_repository_path(item["path"], repository_paths)
+        destination = workspace.joinpath(*repository_path.split("/")).resolve()
         if root not in destination.parents:
             raise RuntimeError("The model attempted to write outside the job workspace.")
-        destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(item["content"], encoding="utf-8")
+        item["path"] = repository_path
 
 
 def _generate_and_apply_model_files(
@@ -1166,13 +1892,13 @@ def _generate_and_apply_model_files(
             )
             _apply_model_files(task, workspace, files)
             return files, summary, repair_attempt
-        except ModelOutputPolicyError as exc:
+        except ModelOutputRepairError as exc:
             if repair_attempt >= maximum_repairs:
                 raise
             allowed = list(policy.get("allowed_paths") or [])
             repository_paths = [item.get("path") for item in _repository_context(workspace)]
             feedback = (
-                f"MODEL OUTPUT POLICY ERROR: {exc}\n"
+                f"MODEL OUTPUT REPAIR ERROR: {exc}\n"
                 f"Allowed paths: {json.dumps(allowed)}\n"
                 f"Existing repository paths: {json.dumps(repository_paths)}\n"
                 "Return corrected JSON only. Copy paths exactly. Do not broaden or bypass policy."
@@ -1180,40 +1906,198 @@ def _generate_and_apply_model_files(
     raise RuntimeError("The AI model could not produce policy-compliant file output.")
 
 
-def _command_args(command: str) -> list[str]:
+def _command_args(
+    command: str,
+    *,
+    python_executable: str | Path | None = None,
+    preparation: bool = False,
+) -> list[str]:
     args = shlex.split(str(command), posix=os.name != "nt")
     if not args:
         raise RuntimeError("Veyra supplied an empty validation command.")
-    allowed = {"python", "python3", "pytest", "npm", "pnpm", "yarn"}
-    executable = Path(args[0]).name.casefold()
+    if any(
+        "\x00" in value
+        or "\n" in value
+        or "\r" in value
+        or value in {"&&", "||", "|", ";", ">", ">>", "<", "2>", "2>&1"}
+        for value in args
+    ):
+        raise RuntimeError("Validation commands may not contain shell operators.")
+    allowed = {
+        "python", "python3", "pytest", "node", "npm", "pnpm", "yarn", "npx",
+        "cargo", "go", "mvn", "mvnw", "mvnw.cmd", "gradle", "gradlew",
+        "gradlew.bat", "php", "composer", "bundle", "forge",
+    }
+    executable = Path(args[0].removeprefix("./")).name.casefold()
     if executable not in allowed:
-        raise RuntimeError(f"Validation command is not allowed in this runtime: {args[0]}")
+        raise RuntimePreflightError(
+            f"Validation command is not allowed in this runtime: {args[0]}",
+            code="UNSAFE_VALIDATION_COMMAND",
+        )
+    selected_python = str(python_executable or sys.executable)
     if executable in {"python", "python3"}:
-        args[0] = sys.executable
-    if executable == "pytest":
-        # Do not rely on PATH containing the virtual environment's Scripts/bin
-        # directory. The runtime itself is already running with the funded
-        # environment, so invoking pytest as a module is deterministic on both
-        # Windows and POSIX hosts.
-        args = [sys.executable, "-m", "pytest", *args[1:]]
-    if executable in {"npm", "pnpm", "yarn"}:
-        if len(args) < 2 or args[1].casefold() not in {"test", "run"}:
-            raise RuntimeError(
-                "JavaScript validation is restricted to npm/pnpm/yarn test or run commands."
+        valid_python = (
+            len(args) >= 3
+            and args[1:3] in (["-m", "pytest"], ["-m", "unittest"])
+        ) or (
+            len(args) >= 3
+            and Path(args[1]).name.casefold() == "manage.py"
+            and args[2].casefold() == "test"
+        )
+        if not valid_python:
+            raise RuntimePreflightError(
+                "Python validation is restricted to pytest, unittest, or manage.py test.",
+                code="UNSAFE_VALIDATION_COMMAND",
             )
+        args[0] = selected_python
+    if executable == "pytest":
+        # Invoke pytest through the lease's Python environment on every host.
+        args = [selected_python, "-m", "pytest", *args[1:]]
+    if executable == "node" and (len(args) < 2 or args[1].casefold() != "--test"):
+        raise RuntimePreflightError(
+            "Node validation is restricted to the built-in node --test runner.",
+            code="UNSAFE_VALIDATION_COMMAND",
+        )
+    if executable in {"npm", "pnpm", "yarn"}:
+        allowed_actions = {"test", "run"}
+        if preparation:
+            allowed_actions.update({"install", "ci"})
+        if len(args) < 2 or args[1].casefold() not in allowed_actions:
+            raise RuntimePreflightError(
+                "Package-manager execution is restricted to test, run, install, or ci.",
+                code="UNSAFE_VALIDATION_COMMAND",
+            )
+    fixed_prefixes: dict[str, tuple[tuple[str, ...], ...]] = {
+        "npx": (("--no-install", "hardhat", "test"),),
+        "cargo": (("test",),),
+        "go": (("test",),),
+        "mvn": (("test",),),
+        "mvnw": (("test",),),
+        "mvnw.cmd": (("test",),),
+        "gradle": (("test",),),
+        "gradlew": (("test",),),
+        "gradlew.bat": (("test",),),
+        "php": (("vendor/bin/phpunit",),),
+        "composer": (("test",),),
+        "bundle": (("exec", "rake", "test"), ("exec", "rspec")),
+        "forge": (("test",),),
+    }
+    if preparation:
+        fixed_prefixes.update(
+            {
+                "cargo": (("fetch",),),
+                "go": (("mod", "download"),),
+                "composer": (("install",),),
+                "bundle": (("install",),),
+            }
+        )
+    prefixes = fixed_prefixes.get(executable)
+    if prefixes and not any(
+        tuple(value.casefold() for value in args[1 : 1 + len(prefix)]) == prefix
+        for prefix in prefixes
+    ):
+        raise RuntimePreflightError(
+            f"Validation command is outside the allowed {executable} operations.",
+            code="UNSAFE_VALIDATION_COMMAND",
+        )
     return args
 
 
-def _run_validation_commands(task: dict[str, Any], workspace: Path) -> tuple[int, str, str]:
+def _command_stack(command: str) -> str:
+    args = shlex.split(str(command), posix=os.name != "nt")
+    if not args:
+        return ""
+    executable = Path(args[0].removeprefix("./")).name.casefold()
+    if executable in {"python", "python3", "pytest"}:
+        return "python"
+    if executable in {"node", "npm", "pnpm", "yarn"}:
+        return "node"
+    if executable == "npx" and any(value.casefold() == "hardhat" for value in args[1:]):
+        return "hardhat"
+    if executable == "cargo":
+        return "rust"
+    if executable == "go":
+        return "go"
+    if executable in {"mvn", "mvnw", "mvnw.cmd"}:
+        return "maven"
+    if executable in {"gradle", "gradlew", "gradlew.bat"}:
+        return "gradle"
+    if executable in {"php", "composer"}:
+        return "php"
+    if executable == "bundle":
+        return "ruby"
+    if executable == "forge":
+        return "foundry"
+    return ""
+
+
+def _require_command_tool(args: list[str], workspace: Path) -> None:
+    if not args:
+        raise RuntimePreflightError(
+            "Validation resolved to an empty command.",
+            code="UNSAFE_VALIDATION_COMMAND",
+        )
+    executable = str(args[0])
+    candidate = Path(executable)
+    if candidate.is_absolute():
+        available = candidate.is_file()
+    elif executable.startswith("./") or executable.startswith(".\\"):
+        resolved = (workspace / executable).resolve()
+        available = workspace.resolve() in resolved.parents and resolved.is_file()
+    elif Path(executable).name.casefold() in {"mvnw", "mvnw.cmd", "gradlew", "gradlew.bat"}:
+        available = (workspace / Path(executable).name).is_file()
+        if available:
+            args[0] = str((workspace / Path(executable).name).resolve())
+    else:
+        resolved = shutil.which(executable)
+        available = resolved is not None
+        if resolved:
+            args[0] = resolved
+    if not available:
+        raise RuntimePreflightError(
+            f"Required validation tool is unavailable: {Path(executable).name}",
+            code="TOOLCHAIN_UNAVAILABLE",
+        )
+
+
+def _validation_plan_evidence(plan: dict[str, Any] | None) -> dict[str, Any]:
+    selected = plan or {}
+    return {
+        "validation_toolchain": str(selected.get("stack") or "unknown"),
+        "validation_command_source": str(selected.get("source") or "unknown"),
+        "validation_commands": [
+            str(value)
+            for value in list(selected.get("commands") or [])
+            if str(value).strip()
+        ],
+    }
+
+
+def _runtime_failure_details(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, RuntimePreflightError):
+        return "runtime_preflight", exc.code
+    return "runtime_execution", "RUNTIME_EXECUTION_FAILED"
+
+
+def _run_validation_commands(
+    task: dict[str, Any],
+    workspace: Path,
+    *,
+    python_executable: str | Path | None = None,
+) -> tuple[int, str, str]:
     policy = task.get("policy") or {}
-    commands = [str(value).strip() for value in list(policy.get("required_commands") or []) if str(value).strip()]
-    if not commands:
-        commands = ["python -m pytest -q"]
+    commands = _validation_commands(task, workspace)
     outputs: list[str] = []
     final_code = 0
     timeout = max(60, int(policy.get("maximum_execution_minutes") or 45) * 60)
     for command in commands:
-        completed = _run_process(_command_args(command), cwd=workspace, timeout=timeout)
+        args = _command_args(command, python_executable=python_executable)
+        _require_command_tool(args, workspace)
+        completed = _run_process(
+            args,
+            cwd=workspace,
+            timeout=timeout,
+        )
         output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
         outputs.append(f"$ {command}\n{output}")
         if completed.returncode != 0:
@@ -1359,6 +2243,24 @@ def _job_run_key(task: dict[str, Any]) -> str:
     return f"{assignment_id}:{lease_id}" if assignment_id and lease_id else ""
 
 
+def _set_job_progress(phase: str, message: str) -> None:
+    with STATE_LOCK:
+        state = load_state()
+        state["job_phase"] = str(phase or "")[:80]
+        state["job_message"] = str(message or "")[:500]
+        state["job_updated_at"] = utc_now_iso()
+        save_state(state)
+
+
+def _set_verification_progress(phase: str, message: str) -> None:
+    with STATE_LOCK:
+        state = load_state()
+        state["verification_phase"] = str(phase or "")[:80]
+        state["verification_message"] = str(message or "")[:500]
+        state["verification_updated_at"] = utc_now_iso()
+        save_state(state)
+
+
 def run_job_task(task: dict[str, Any]) -> None:
     assignment_id = str(task.get("id") or "")
     lease_id = str(task.get("lease_id") or "")
@@ -1372,17 +2274,21 @@ def run_job_task(task: dict[str, Any]) -> None:
         state["job_assignment_attempt"] = int(task.get("assignment_attempt") or 0)
         state["job_onchain_id"] = job_id
         state["job_status"] = "running"
-        state["job_message"] = "Cloning the funded repository and starting agent execution."
+        state["job_phase"] = "PREPARING_REPOSITORY"
+        state["job_message"] = "Preparing the funded repository."
         state["job_updated_at"] = utc_now_iso()
         save_state(state)
     workspace = _job_workspace(assignment_id, lease_id)
+    python_environment = _job_python_environment(workspace)
     token = ""
+    validation_plan: dict[str, Any] | None = None
     try:
         credential = _repository_credential(task)
         token = str(credential["token"])
         repository = task.get("repository") or {}
         branch = str((task.get("delivery") or {}).get("branch") or "")
         target = str(repository.get("target_branch") or "main")
+        _set_job_progress("PREPARING_REPOSITORY", "Cloning the funded repository and preparing the execution branch.")
         if workspace.exists():
             _remove_workspace(workspace, strict=True)
         workspace.parent.mkdir(parents=True, exist_ok=True)
@@ -1403,20 +2309,44 @@ def run_job_task(task: dict[str, Any]) -> None:
         _git(workspace, "checkout", "-b", branch)
         base_sha = _git(workspace, "rev-parse", "HEAD").splitlines()[0].strip()
 
-        baseline_code, baseline_output, baseline_command = _run_validation_commands(task, workspace)
+        validation_plan = _validation_plan(task, workspace)
+        _set_job_progress("PREPARING_ENVIRONMENT", "Preparing dependencies and the validation environment.")
+        python_executable, setup_output, setup_command = _prepare_validation_environment(
+            task,
+            workspace,
+            python_environment,
+        )
+        _set_job_progress("BASELINE_VALIDATION", "Running the funded baseline validation before code changes.")
+        baseline_code, baseline_output, baseline_command = _run_validation_commands(
+            task,
+            workspace,
+            python_executable=python_executable,
+        )
+        _set_job_progress("GENERATING_IMPLEMENTATION", "Generating and applying the implementation with the configured AI model.")
         files, summary, model_output_repairs = _generate_and_apply_model_files(task, workspace)
-        code, output, command = _run_validation_commands(task, workspace)
+        _set_job_progress("POST_CHANGE_VALIDATION", "Running the funded validation against the generated changes.")
+        code, output, command = _run_validation_commands(
+            task,
+            workspace,
+            python_executable=python_executable,
+        )
         max_repairs = max(0, int((task.get("policy") or {}).get("maximum_repair_attempts") or 0))
         repairs = 0
         while code != 0 and repairs < max_repairs:
             repairs += 1
+            _set_job_progress("REPAIRING_IMPLEMENTATION", f"Repairing the implementation after validation failure (attempt {repairs} of {max_repairs}).")
             files, summary, extra_output_repairs = _generate_and_apply_model_files(
                 task,
                 workspace,
                 previous_feedback=output,
             )
             model_output_repairs += extra_output_repairs
-            code, output, command = _run_validation_commands(task, workspace)
+            _set_job_progress("POST_CHANGE_VALIDATION", "Re-running the funded validation after the repair.")
+            code, output, command = _run_validation_commands(
+                task,
+                workspace,
+                python_executable=python_executable,
+            )
         if code != 0:
             raise RuntimeError(f"Post-change tests did not pass after {repairs + 1} attempt(s): {output[:1000]}")
 
@@ -1424,10 +2354,13 @@ def run_job_task(task: dict[str, Any]) -> None:
         if not changed:
             raise RuntimeError("The model produced no repository changes.")
         _enforce_job_path_policy(task, changed)
+        _set_job_progress("CREATING_COMMIT", "Validation passed. Creating the exact Veyra execution commit.")
         _git(workspace, "add", "--", *changed)
         _git(workspace, "commit", "-m", f"Veyra job {job_id}: {str((task.get('work') or {}).get('title') or 'agent work')[:120]}")
         commit_sha = _git(workspace, "rev-parse", "HEAD").splitlines()[0].strip().lower()
+        _set_job_progress("PUSHING_BRANCH", "Pushing the validated execution commit to the Veyra job branch.")
         _git(workspace, "push", "origin", f"HEAD:refs/heads/{branch}", token=token, timeout=180)
+        _set_job_progress("CREATING_PULL_REQUEST", "Opening the pull request for independent verification.")
         pr_number, pr_url = _create_pull_request(task, token, commit_sha, summary, output)
         completed_at = utc_now_iso()
         evidence = {
@@ -1442,12 +2375,15 @@ def run_job_task(task: dict[str, Any]) -> None:
             "pull_request_number": pr_number,
             "pull_request_url": pr_url,
             "changed_files": changed,
+            "environment_setup_command": setup_command,
+            "environment_setup_output": setup_output,
             "baseline_test_command": baseline_command,
             "baseline_test_return_code": int(baseline_code),
             "baseline_test_output": baseline_output,
             "test_command": command,
             "test_return_code": int(code),
             "test_output": output,
+            **_validation_plan_evidence(validation_plan),
             "repair_attempts": repairs,
             "model_output_repair_attempts": model_output_repairs,
             "provider": AI_PROVIDER,
@@ -1457,10 +2393,12 @@ def run_job_task(task: dict[str, Any]) -> None:
             "started_at": started_at,
             "completed_at": completed_at,
         }
+        _set_job_progress("SUBMITTING_RESULT", f"Pull request #{pr_number} is ready. Submitting signed execution evidence to Veyra.")
         _submit_job_result(task, evidence)
         with STATE_LOCK:
             state = load_state()
             state["job_status"] = "submitted"
+            state["job_phase"] = "SUBMITTED"
             state["job_message"] = f"Pull request #{pr_number} submitted to Veyra for on-chain submission and verification."
             state["job_updated_at"] = utc_now_iso()
             save_state(state)
@@ -1468,13 +2406,16 @@ def run_job_task(task: dict[str, Any]) -> None:
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)
         message = _safe_runtime_text(exc, limit=1200)
+        failure_stage, failure_code = _runtime_failure_details(exc)
         failure_evidence = {
             "outcome": "FAILED",
             "assignment_id": assignment_id,
             "lease_id": str(task.get("lease_id") or ""),
             "job_id": int(task.get("job_id") or 0),
-            "failure_stage": "runtime_execution",
+            "failure_stage": failure_stage,
+            "failure_code": failure_code,
             "failure_message": message,
+            **_validation_plan_evidence(validation_plan),
             "provider": AI_PROVIDER,
             "model": AI_MODEL,
             "runtime_version": RUNTIME_VERSION,
@@ -1489,11 +2430,13 @@ def run_job_task(task: dict[str, Any]) -> None:
         with STATE_LOCK:
             state = load_state()
             state["job_status"] = "failed"
+            state["job_phase"] = "FAILED"
             state["job_message"] = message
             state["job_updated_at"] = utc_now_iso()
             save_state(state)
     finally:
         token = ""
+        _remove_workspace(python_environment, strict=False)
         if os.getenv("VEYRA_KEEP_FAILED_WORKSPACES", "false").casefold() not in {"1", "true", "yes"}:
             _remove_workspace(workspace, strict=False)
         with JOB_LOCK:
@@ -1604,13 +2547,8 @@ def _verification_model_report(
         f"Exact commit diff: {_safe_runtime_text(diff_text, limit=50000)}\n"
         f"Repository context: {json.dumps(context, ensure_ascii=False)}"
     )
-    response = httpx.post(
-        f"{AI_BASE_URL}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {AI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
+    payload = _post_ai_json(
+        {
             "model": AI_MODEL,
             "messages": [
                 {
@@ -1624,12 +2562,9 @@ def _verification_model_report(
             ],
             "temperature": 0.0,
         },
+        source="The verifier AI provider",
         timeout=max(120, int(os.getenv("VEYRA_MODEL_TIMEOUT_SECONDS", "240"))),
-        follow_redirects=False,
     )
-    if response.status_code != 200:
-        raise RuntimeError(f"The verifier AI provider returned {response.status_code}.")
-    payload = response.json()
     choices = payload.get("choices") if isinstance(payload, dict) else None
     message = (
         choices[0].get("message")
@@ -1744,12 +2679,14 @@ def run_verification_task(task: dict[str, Any]) -> None:
         state = load_state()
         state["verification_assignment_id"] = verification_id
         state["verification_status"] = "running"
+        state["verification_phase"] = "PREPARING_REVIEW"
         state["verification_message"] = (
-            "Cloning the exact submitted commit with read-only access and reviewing it."
+            "Preparing the exact submitted commit for independent review."
         )
         state["verification_updated_at"] = utc_now_iso()
         save_state(state)
     workspace = _verification_workspace(verification_id)
+    python_environment = _job_python_environment(workspace)
     token = ""
     try:
         credential = _verification_credential(task)
@@ -1760,6 +2697,7 @@ def run_verification_task(task: dict[str, Any]) -> None:
         target = str(repository.get("target_branch") or "main")
         if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
             raise RuntimeError("Veyra supplied an invalid immutable commit SHA.")
+        _set_verification_progress("CHECKING_OUT_COMMIT", "Cloning the repository with read-only access and checking out the exact submitted commit.")
         if workspace.exists():
             _remove_workspace(workspace, strict=True)
         workspace.parent.mkdir(parents=True, exist_ok=True)
@@ -1798,32 +2736,18 @@ def run_verification_task(task: dict[str, Any]) -> None:
         if actual_sha != commit_sha:
             raise RuntimeError("The verifier checkout does not match the submitted commit.")
 
-        policy = task.get("policy") or {}
-        commands = [
-            str(value).strip()
-            for value in list(policy.get("required_commands") or [])
-            if str(value).strip()
-        ]
-        if not commands:
-            commands = ["python -m pytest -q"]
-        outputs: list[str] = []
-        return_code = 0
-        timeout = max(60, int(policy.get("maximum_review_minutes") or 30) * 60)
-        for command in commands:
-            completed = _run_process(
-                _command_args(command),
-                cwd=workspace,
-                timeout=timeout,
-            )
-            output = "\n".join(
-                part for part in (completed.stdout, completed.stderr) if part
-            ).strip()
-            outputs.append(f"$ {command}\n{output}")
-            if completed.returncode != 0:
-                return_code = completed.returncode
-                break
-        test_command = " ; ".join(commands)
-        test_output = _safe_runtime_text("\n\n".join(outputs), limit=12000)
+        _set_verification_progress("PREPARING_ENVIRONMENT", "Preparing the independent verifier validation environment.")
+        python_executable, setup_output, setup_command = _prepare_validation_environment(
+            task,
+            workspace,
+            python_environment,
+        )
+        _set_verification_progress("RUNNING_VALIDATION", "Running the funded validation independently on the exact submitted commit.")
+        return_code, test_output, test_command = _run_validation_commands(
+            task,
+            workspace,
+            python_executable=python_executable,
+        )
         diff_text = _git(
             workspace,
             "diff",
@@ -1852,6 +2776,7 @@ def run_verification_task(task: dict[str, Any]) -> None:
             raise RuntimeError(
                 "The exact commit changed-file set no longer matches the worker evidence."
             )
+        _set_verification_progress("EVALUATING_REQUIREMENTS", "Evaluating the funded acceptance criteria and security constraints.")
         model_result = _verification_model_report(
             task,
             workspace,
@@ -1869,6 +2794,8 @@ def run_verification_task(task: dict[str, Any]) -> None:
             "independent_test_command": test_command,
             "independent_test_return_code": int(return_code),
             "independent_test_output": test_output,
+            "environment_setup_command": setup_command,
+            "environment_setup_output": setup_output,
             "acceptance_criteria": model_result["acceptance_criteria"],
             "security_findings": model_result["security_findings"],
             "provider": AI_PROVIDER,
@@ -1877,10 +2804,12 @@ def run_verification_task(task: dict[str, Any]) -> None:
             "started_at": started_at,
             "completed_at": utc_now_iso(),
         }
+        _set_verification_progress("SUBMITTING_VERDICT", "Submitting the signed independent verification report to Veyra.")
         result = _submit_verification_result(task, report)
         with STATE_LOCK:
             state = load_state()
             state["verification_status"] = str(result.get("verdict") or "submitted").lower()
+            state["verification_phase"] = "COMPLETED"
             state["verification_message"] = (
                 f"Independent verdict submitted: {str(result.get('verdict') or '').upper()}."
             )
@@ -1891,11 +2820,13 @@ def run_verification_task(task: dict[str, Any]) -> None:
         with STATE_LOCK:
             state = load_state()
             state["verification_status"] = "failed"
+            state["verification_phase"] = "FAILED"
             state["verification_message"] = message
             state["verification_updated_at"] = utc_now_iso()
             save_state(state)
     finally:
         token = ""
+        _remove_workspace(python_environment, strict=False)
         _remove_workspace(workspace, strict=False)
         with VERIFICATION_LOCK:
             VERIFICATION_RUNNING.discard(verification_id)
@@ -1943,6 +2874,17 @@ def heartbeat_loop() -> None:
                         "model": AI_MODEL,
                         "runtime_version": RUNTIME_VERSION,
                         "message": provider_message,
+                        "job_assignment_id": str(state.get("job_assignment_id") or ""),
+                        "job_onchain_id": str(state.get("job_onchain_id") or ""),
+                        "job_status": str(state.get("job_status") or ""),
+                        "job_phase": str(state.get("job_phase") or ""),
+                        "job_message": str(state.get("job_message") or ""),
+                        "job_updated_at": str(state.get("job_updated_at") or ""),
+                        "verification_assignment_id": str(state.get("verification_assignment_id") or ""),
+                        "verification_status": str(state.get("verification_status") or ""),
+                        "verification_phase": str(state.get("verification_phase") or ""),
+                        "verification_message": str(state.get("verification_message") or ""),
+                        "verification_updated_at": str(state.get("verification_updated_at") or ""),
                     },
                     timeout=15,
                 )

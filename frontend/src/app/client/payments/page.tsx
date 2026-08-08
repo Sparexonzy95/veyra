@@ -1,32 +1,118 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { Panel, PanelHeader } from "@/components/dashboard/panel";
+import {
+  DashboardPagination,
+  PAGE_SIZE,
+  pageCount,
+  usePageParam,
+} from "@/components/dashboard/pagination";
+import { EmptyState, ErrorState, LoadingRows } from "@/components/dashboard/states";
+import { StatusBadge } from "@/components/dashboard/status-badge";
 import { apiFetch } from "@/lib/api";
-import type { CircleTransactionStatus, WalletSummary } from "@/types/veyra";
-import { CircleDollarSign, ReceiptText } from "lucide-react";
-import { useEffect, useState } from "react";
+import type { CircleTransactionStatus } from "@/types/veyra";
+import { ReceiptText } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+function purposeLabel(purpose: string) {
+  return purpose
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 
 export default function ClientPaymentsPage() {
-  const [wallet, setWallet] = useState<WalletSummary | null>(null);
   const [transactions, setTransactions] = useState<CircleTransactionStatus[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void Promise.all([
-      apiFetch<WalletSummary>("/api/v1/client/wallet/"),
-      apiFetch<{ results: CircleTransactionStatus[] }>("/api/v1/client/transactions/"),
-    ]).then(([nextWallet, page]) => {
-      setWallet(nextWallet);
+  // Balance and network now live in the top-bar wallet popover, so this page
+  // no longer fetches the wallet to restate them. It loads payment activity
+  // only, which is what distinguishes it from the popover.
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const page = await apiFetch<{ results: CircleTransactionStatus[] }>(
+        "/api/v1/client/transactions/",
+      );
       setTransactions(page.results);
-    }).catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Payments could not be loaded."));
+      setError(null);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Payments could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const { page, setPage } = usePageParam();
+  const totalPages = pageCount(transactions.length, PAGE_SIZE.payments);
+  // CircleTransactionListView is a plain APIView with no `?page=`, so the
+  // slice is local. The payload is one client's transactions, not an
+  // unbounded table.
+  const visible = transactions.slice(
+    (page - 1) * PAGE_SIZE.payments,
+    page * PAGE_SIZE.payments,
+  );
+  const listRef = useRef<HTMLDivElement | null>(null);
+
   return (
-    <div className="space-y-6">
-      <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Client workspace</p><h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Payments</h1><p className="mt-1.5 text-sm text-muted-foreground">Your wallet, approvals, escrow funding and refunds.</p></div>
-      {error ? <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{error}</div> : null}
-      <Card><CardHeader><CardTitle className="flex items-center gap-2"><CircleDollarSign className="h-5 w-5" /> Wallet balance</CardTitle></CardHeader><CardContent><p className="text-3xl font-bold">{wallet?.usdc_balance ?? "0"} USDC</p><p className="mt-1 text-sm text-muted-foreground">{wallet?.blockchain ?? "Arc Testnet"}</p></CardContent></Card>
-      <Card><CardHeader><CardTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5" /> Payment activity</CardTitle></CardHeader><CardContent className="divide-y p-0">{transactions.length ? transactions.map((transaction) => <div key={transaction.id} className="flex items-center justify-between gap-4 p-4"><div><p className="text-sm font-medium">{transaction.purpose.replaceAll("_", " ")}</p><p className="text-xs text-muted-foreground">{new Date(transaction.created_at).toLocaleString()}</p></div><span className="text-sm font-medium">{transaction.status.replaceAll("_", " ").toLowerCase()}</span></div>) : <p className="p-6 text-sm text-muted-foreground">No payment activity yet.</p>}</CardContent></Card>
-    </div>
+    <>
+      <PageHeader
+        title="Payments"
+        description="Funding and settlement history for your jobs."
+      />
+
+      {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
+
+      <Panel className="overflow-hidden" ref={listRef}>
+        <PanelHeader title="Payment activity" />
+        {loading ? (
+          <LoadingRows rows={PAGE_SIZE.payments} />
+        ) : visible.length ? (
+          <ul className="divide-y divide-border">
+            {visible.map((transaction) => (
+              <li
+                key={transaction.id}
+                className="flex items-center justify-between gap-4 px-4 py-3.5"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {purposeLabel(transaction.purpose)}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {new Date(transaction.created_at).toLocaleString()}
+                  </p>
+                </div>
+                <StatusBadge status={transaction.status} />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState
+            icon={ReceiptText}
+            title="No payment activity yet"
+            description="Funding and settlement events appear here."
+          />
+        )}
+        {!loading && transactions.length ? (
+          <DashboardPagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={transactions.length}
+            onPageChange={setPage}
+            scrollTargetRef={listRef}
+          />
+        ) : null}
+      </Panel>
+    </>
   );
 }

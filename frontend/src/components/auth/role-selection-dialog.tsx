@@ -1,7 +1,7 @@
 "use client";
 
 import { useVeyra } from "@/components/providers/veyra-provider";
-import { Button } from "@/components/ui/button";
+import { VeyraChoice } from "@/components/auth/veyra-choice";
 import {
   Dialog,
   DialogContent,
@@ -9,86 +9,46 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Bot, Building2 } from "lucide-react";
-import { useState } from "react";
 
+/**
+ * Signup actor choice. Renders the same `VeyraChoice` component as
+ * `/workspace`, so there is one design to maintain rather than two.
+ */
 export function RoleSelectionDialog() {
   const {
     roleDialogOpen,
     chooseClientRole,
     chooseAgentOwnerRole,
     busy,
+    me,
   } = useVeyra();
-  const [selected, setSelected] = useState<"CLIENT" | "AGENT_OWNER" | null>(null);
 
-  async function continueWithRole() {
-    if (selected === "CLIENT") {
-      await chooseClientRole();
-      return;
-    }
-    if (selected === "AGENT_OWNER") {
-      await chooseAgentOwnerRole();
-    }
-  }
+  const hasClient = Boolean(me?.capabilities?.includes("CLIENT"));
+  const hasAgentOwner = Boolean(me?.capabilities?.includes("AGENT_OWNER"));
 
   return (
     <Dialog open={roleDialogOpen}>
-      <DialogContent className="sm:max-w-[560px]" hideCloseButton>
+      <DialogContent
+        className="veyra-scope border-veyra-cream/10 bg-veyra-ink p-6 text-veyra-cream shadow-[0_28px_90px_rgba(0,0,0,0.55)] sm:max-w-[720px]"
+        hideCloseButton
+      >
         <DialogHeader>
-          <DialogTitle>How will you use Veyra?</DialogTitle>
-          <DialogDescription>
-            Choose your first workspace. You can hold both roles later.
+          <DialogTitle className="text-xl tracking-[-0.02em] text-veyra-cream">
+            How will you use Veyra?
+          </DialogTitle>
+          <DialogDescription className="text-sm text-veyra-muted">
+            Your account can use both sides.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <button
-            type="button"
-            className={`relative w-full cursor-pointer rounded-xl border-2 p-6 text-left transition-all ${
-              selected === "CLIENT"
-                ? "border-primary-500 bg-primary-500/5"
-                : "border-border hover:border-primary-500/50"
-            }`}
-            onClick={() => setSelected("CLIENT")}
-          >
-            <div className="flex items-start gap-4">
-              <Building2 className="mt-1 h-8 w-8" />
-              <div>
-                <h3 className="text-lg font-semibold">Hire an Agent</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Post GitHub work, fund jobs, and track verified delivery.
-                </p>
-              </div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            className={`relative w-full cursor-pointer rounded-xl border-2 p-6 text-left transition-all ${
-              selected === "AGENT_OWNER"
-                ? "border-primary-500 bg-primary-500/5"
-                : "border-border hover:border-primary-500/50"
-            }`}
-            onClick={() => setSelected("AGENT_OWNER")}
-          >
-            <div className="flex items-start gap-4">
-              <Bot className="mt-1 h-8 w-8" />
-              <div>
-                <h3 className="text-lg font-semibold">Run an Agent</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Connect and manage Agent Starters, receive work, and earn USDC.
-                </p>
-              </div>
-            </div>
-          </button>
-        </div>
-        <div className="flex justify-end gap-3">
-          <Button
-            onClick={() => void continueWithRole()}
-            disabled={!selected || busy}
-            className="min-w-[120px]"
-          >
-            {busy ? "Setting up..." : "Continue"}
-          </Button>
+        <div className="pt-2">
+          <VeyraChoice
+            compact
+            busy={busy}
+            hasMaintainer={hasClient}
+            hasAgentOwner={hasAgentOwner}
+            onChooseMaintainer={() => void chooseClientRole()}
+            onChooseAgentOwner={() => void chooseAgentOwnerRole()}
+          />
         </div>
       </DialogContent>
     </Dialog>

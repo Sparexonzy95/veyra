@@ -72,6 +72,19 @@ def _hash_json(value: Any) -> str:
     return Web3.to_hex(Web3.keccak(text=canonical_json(value)))
 
 
+def _github_checks_required(assignment: WorkerJobAssignment) -> bool:
+    """Return the GitHub CI requirement committed when the job was funded.
+
+    External CI is supporting evidence. It becomes a settlement gate only when
+    the immutable funded policy explicitly requires it. Mutable draft settings
+    and deployment-wide defaults must never change a funded job's settlement
+    requirements after the client has funded it.
+    """
+
+    policy = assignment.job.draft.funding_snapshot.policy_commitment or {}
+    return bool(policy.get("requireGithubChecks", False))
+
+
 def _verifier_signer(arc: ArcClient, assignment: WorkerJobAssignment):
     private_key = str(getattr(settings, "VEYRA_VERIFIER_PRIVATE_KEY", "") or "").strip()
     if not private_key:
@@ -188,10 +201,10 @@ def _verification_report(assignment: WorkerJobAssignment) -> tuple[dict[str, Any
         if str(check.get("conclusion") or "").casefold()
         not in PASSING_CHECK_CONCLUSIONS | FAILING_CHECK_CONCLUSIONS
     ]
-    require_checks = bool(getattr(settings, "VEYRA_REQUIRE_GITHUB_CHECKS", True))
+    require_checks = _github_checks_required(assignment)
     if require_checks and not checks:
         raise ExecutionVerificationPending(
-            "No GitHub Check Run is available for this exact commit. CI must be configured before verification."
+            "GitHub CI is required for this funded job, but no Check Run is available for the exact submitted commit yet. Configure or rerun the repository CI; Veyra will recheck automatically."
         )
     ci_passed = not failed_checks and not unknown_checks and (
         bool(checks) or not require_checks
@@ -274,6 +287,14 @@ def _verification_report(assignment: WorkerJobAssignment) -> tuple[dict[str, Any
         "runtime_evidence_hash": assignment.evidence_hash,
         "worker_runtime_signature_verified": True,
         "github_exact_commit_verified": True,
+        "github_checks_required": require_checks,
+        "github_checks_status": (
+            "PASSED"
+            if checks and ci_passed
+            else "NOT_CONFIGURED_OPTIONAL"
+            if not checks and not require_checks
+            else "FAILED"
+        ),
         "github_ci_passed": bool(ci_passed),
         "github_checks": normalized_checks,
         "verifier_agent": {
@@ -619,7 +640,7 @@ def verify_and_settle_assignment(
             ) from exc
 
     timeout = int(getattr(settings, "VEYRA_SETTLEMENT_TIMEOUT_SECONDS", 180))
-    poll = max(1, int(getattr(settings, "VEYRA_SETTLEMENT_POLL_INTERVAL_SECONDS", 3)))
+    poll = max(1, int(getattr(settings, "VEYRA_SETTLEMENT_POLL_INTERVAL_SECONDS", 2)))
     try:
         receipt = arc.wait_for_transaction_receipt(
             tx_hash, timeout=timeout, poll_latency=poll

@@ -29,6 +29,23 @@ class CommitmentTests(TestCase):
         self.assertEqual(int(snapshot.budget_atomic), 10_000_000)
         self.assertTrue(snapshot.repository_hash.startswith('0x'))
         self.assertEqual(snapshot.verifier_address, settings.VEYRA_VERIFIER_ADDRESS.lower())
+        self.assertFalse(snapshot.policy_commitment['requireGithubChecks'])
+
+    def test_snapshot_commits_explicit_github_ci_requirement(self):
+        user = User.objects.create_user()
+        draft = JobDraft.objects.create(
+            client=user,
+            github_issue_url='https://github.com/o/r/issues/2',
+            repository_owner='o', repository_name='r', issue_number=2,
+            issue_title='Fix CI bug', issue_body='Details', budget_usdc='10.000000',
+            deadline=timezone.now() + timedelta(days=1),
+            acceptance_criteria=['Tests pass'],
+            advanced_options={'require_github_checks': True},
+        )
+
+        snapshot = lock_funding_snapshot(draft)
+
+        self.assertTrue(snapshot.policy_commitment['requireGithubChecks'])
 
 class JobDraftApiTests(TestCase):
     def setUp(self):
@@ -89,6 +106,112 @@ class JobDraftApiTests(TestCase):
         }, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(JobDraft.objects.count(), 1)
+
+
+    @patch('jobs.views.fetch_issue')
+    @patch('jobs.services.github_ci_preflight')
+    def test_review_blocks_required_github_ci_when_repository_is_not_ready(
+        self, ci_preflight, fetch_issue
+    ):
+        fetch_issue.return_value = {
+            'github_issue_url': 'https://github.com/o/r/issues/3',
+            'repository_owner': 'o', 'repository_name': 'r', 'target_branch': 'main',
+            'issue_number': 3, 'issue_title': 'CI required', 'issue_body': 'Details',
+            'acceptance_criteria': ['Tests pass'],
+        }
+        ci_preflight.return_value = {
+            'ready': False,
+            'message': 'No GitHub CI configuration or existing Check Run provider was detected for this branch.',
+        }
+        create = self.client.post('/api/v1/client/job-drafts/', {
+            'github_issue_url': 'https://github.com/o/r/issues/3',
+            'budget_usdc': '10.000000',
+            'deadline': (timezone.now() + timedelta(days=1)).isoformat(),
+            'acceptance_criteria': ['Tests pass'],
+            'advanced_options': {'require_github_checks': True},
+        }, format='json')
+
+        response = self.client.post(
+            f"/api/v1/client/job-drafts/{create.data['id']}/review/", {}, format='json'
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('No GitHub CI', str(response.data))
+        self.assertEqual(JobDraft.objects.get(id=create.data['id']).status, JobDraft.Status.DRAFT)
+
+    @patch('jobs.views.fetch_issue')
+    @patch('jobs.services.github_ci_preflight')
+    def test_review_allows_required_github_ci_when_preflight_is_ready(
+        self, ci_preflight, fetch_issue
+    ):
+        fetch_issue.return_value = {
+            'github_issue_url': 'https://github.com/o/r/issues/4',
+            'repository_owner': 'o', 'repository_name': 'r', 'target_branch': 'main',
+            'issue_number': 4, 'issue_title': 'CI ready', 'issue_body': 'Details',
+            'acceptance_criteria': ['Tests pass'],
+        }
+        ci_preflight.return_value = {
+            'ready': True,
+            'source': 'AUTOMATIC_WORKFLOW',
+            'message': 'GitHub CI is ready.',
+        }
+        create = self.client.post('/api/v1/client/job-drafts/', {
+            'github_issue_url': 'https://github.com/o/r/issues/4',
+            'budget_usdc': '10.000000',
+            'deadline': (timezone.now() + timedelta(days=1)).isoformat(),
+            'acceptance_criteria': ['Tests pass'],
+            'advanced_options': {'require_github_checks': True},
+        }, format='json')
+
+        response = self.client.post(
+            f"/api/v1/client/job-drafts/{create.data['id']}/review/", {}, format='json'
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data['verification_requirements']['github_ci_required'])
+        self.assertTrue(response.data['verification_requirements']['github_ci_preflight']['ready'])
+        self.assertEqual(JobDraft.objects.get(id=create.data['id']).status, JobDraft.Status.READY)
+
+    @patch('jobs.views.fetch_issue')
+    @patch('jobs.services.github_ci_preflight')
+    def test_required_github_ci_is_rechecked_before_wallet_funding_lock(
+        self, ci_preflight, fetch_issue
+    ):
+        fetch_issue.return_value = {
+            'github_issue_url': 'https://github.com/o/r/issues/5',
+            'repository_owner': 'o', 'repository_name': 'r', 'target_branch': 'main',
+            'issue_number': 5, 'issue_title': 'CI changes', 'issue_body': 'Details',
+            'acceptance_criteria': ['Tests pass'],
+        }
+        ci_preflight.side_effect = [
+            {'ready': True, 'source': 'AUTOMATIC_WORKFLOW', 'message': 'GitHub CI is ready.'},
+            {'ready': False, 'source': 'NO_CI_EVIDENCE', 'message': 'GitHub CI is no longer ready.'},
+        ]
+        create = self.client.post('/api/v1/client/job-drafts/', {
+            'github_issue_url': 'https://github.com/o/r/issues/5',
+            'budget_usdc': '10.000000',
+            'deadline': (timezone.now() + timedelta(days=1)).isoformat(),
+            'acceptance_criteria': ['Tests pass'],
+            'advanced_options': {'require_github_checks': True},
+        }, format='json')
+        draft_id = create.data['id']
+        review = self.client.post(
+            f'/api/v1/client/job-drafts/{draft_id}/review/', {}, format='json'
+        )
+        self.assertEqual(review.status_code, 200, review.data)
+
+        approval = self.client.post(
+            f'/api/v1/client/job-drafts/{draft_id}/approval-challenge/',
+            {},
+            format='json',
+            HTTP_X_CIRCLE_USER_TOKEN='u' * 40,
+        )
+
+        self.assertEqual(approval.status_code, 400, approval.data)
+        self.assertIn('no longer ready', str(approval.data).lower())
+        draft = JobDraft.objects.get(id=draft_id)
+        self.assertEqual(draft.status, JobDraft.Status.READY)
+        self.assertFalse(hasattr(draft, 'funding_snapshot'))
 
 from unittest.mock import MagicMock
 from django.test import override_settings

@@ -12,24 +12,12 @@
 
 export type Capability = string;
 
-/** Never a public marketing route: `/` must not be a post-auth destination. */
+/** Every successful sign-in lands on the shared, reusable workspace chooser. */
 export const ROLE_SELECTION_PATH = "/workspace";
 
 export function resolveAuthDestination(
-  capabilities: Capability[] | null | undefined,
+  _capabilities: Capability[] | null | undefined,
 ): string {
-  const list = capabilities ?? [];
-  const hasClient = list.includes("CLIENT");
-  const hasAgentOwner = list.includes("AGENT_OWNER");
-
-  // Both capabilities: the workspace switcher is the canonical landing spot,
-  // because picking one for the user would be a guess.
-  if (hasClient && hasAgentOwner) return ROLE_SELECTION_PATH;
-  if (hasClient) return "/client";
-  if (hasAgentOwner) return "/agent-owner";
-
-  // Authenticated but no capability yet: `/workspace` hosts the existing
-  // "How do you want to use Veyra?" chooser.
   return ROLE_SELECTION_PATH;
 }
 

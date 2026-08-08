@@ -10,6 +10,13 @@ from workers.models import HostedAgentConnection, WorkerAgent
 from workers.permissions import IsAgentOwner
 from workers.runtime_status import runtime_snapshot
 from workers.serializers import AgentOwnerWorkerSerializer
+from workers.withdrawals import (
+    AgentWithdrawalError,
+    create_withdrawal,
+    reconcile_withdrawal,
+    wallet_snapshot,
+    withdrawal_public,
+)
 
 
 class AgentOwnerWorkerViewSet(viewsets.ModelViewSet):
@@ -154,6 +161,46 @@ class AgentOwnerWorkerViewSet(viewsets.ModelViewSet):
             resource_id=str(worker.id),
         )
         return Response({"agent": self.get_serializer(worker).data})
+
+
+    @action(detail=True, methods=["get"], url_path="wallet")
+    def wallet(self, request, pk=None):
+        worker = self.get_object()
+        try:
+            return Response({"wallet": wallet_snapshot(worker, request.user)})
+        except AgentWithdrawalError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    @action(detail=True, methods=["get"], url_path="withdrawals")
+    def withdrawals(self, request, pk=None):
+        worker = self.get_object()
+        records = list(worker.withdrawals.order_by("-created_at")[:25])
+        if records and records[0].circle_transaction_id:
+            try:
+                records[0] = reconcile_withdrawal(records[0])
+            except AgentWithdrawalError:
+                pass
+        return Response({"withdrawals": [withdrawal_public(value) for value in records]})
+
+    @action(detail=True, methods=["post"], url_path="withdraw")
+    def withdraw(self, request, pk=None):
+        worker = self.get_object()
+        try:
+            withdrawal = create_withdrawal(
+                worker=worker,
+                owner=request.user,
+                destination_address=request.data.get("destination_address"),
+                amount_usdc=request.data.get("amount_usdc"),
+            )
+        except AgentWithdrawalError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(
+            {
+                "withdrawal": withdrawal_public(withdrawal),
+                "wallet": wallet_snapshot(worker, request.user, reconcile=False),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(detail=True, methods=["post"], url_path="create-wallet")
     def create_wallet(self, request, pk=None):

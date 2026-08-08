@@ -18,88 +18,102 @@ import {
 } from "@/components/ui/sidebar";
 import workspaceConfig from "@/config/workspaces.json";
 import {
-  Activity,
   Bot,
   BriefcaseBusiness,
   CircleDollarSign,
   Github,
   Home,
-  ListChecks,
   Plus,
-  Search,
   Settings,
-  Trophy,
 } from "lucide-react";
-import Image from "next/image";
+import { VeyraWordmark } from "@/components/landing/veyra-wordmark";
+import { resolveActiveNavIndex } from "@/lib/nav-active";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useMemo } from "react";
 
 export type WorkspaceKind = "client" | "agent-owner";
 
 const icons = {
-  activity: Activity,
   agents: Bot,
-  assignments: ListChecks,
-  available: Search,
   github: Github,
   home: Home,
   jobs: BriefcaseBusiness,
   payments: CircleDollarSign,
   plus: Plus,
-  reputation: Trophy,
   settings: Settings,
 };
 
 export function AppSidebar({ workspace }: { workspace: WorkspaceKind }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { me } = useVeyra();
   const config = workspaceConfig[workspace];
+  // Pick one winner across the whole list. `config.home` is passed so Overview
+  // matches only itself instead of becoming a fallback for every workspace URL.
+  const activeIndex = useMemo(
+    () =>
+      resolveActiveNavIndex(
+        config.navigation,
+        pathname,
+        searchParams,
+        config.home,
+      ),
+    [config.home, config.navigation, pathname, searchParams],
+  );
   const dualRole = Boolean(
     me?.capabilities?.includes("CLIENT") &&
       me.capabilities.includes("AGENT_OWNER"),
   );
 
   return (
-    <Sidebar collapsible="icon" className="border-r-border/70">
+    <Sidebar collapsible="icon" className="veyra-scope border-r-border">
       <SidebarHeader className="space-y-3 p-3 group-data-[collapsible=icon]:p-2">
         <div className="flex w-full items-center justify-between">
-          <Link href={config.home} className="flex items-center gap-2">
-            <Image
-              src="/veyra-logo.svg"
-              alt="Veyra"
-              width={42}
-              height={42}
-              className="rounded-md"
+          {/* The approved wordmark artwork, rendered through the same
+              component the landing header uses. Previously this was a
+              re-drawn text-only SVG, which meant the authenticated logo was
+              a lookalike rather than the brand asset. */}
+          <Link
+            href={config.home}
+            className="flex items-center group-data-[collapsible=icon]:hidden"
+            aria-label="Veyra home"
+          >
+            <VeyraWordmark
+              uid="sidebar"
+              color="var(--veyra-cream)"
+              className="w-[68px]"
             />
-            <span className="text-lg font-semibold group-data-[collapsible=icon]:hidden">
-              Veyra
-            </span>
           </Link>
-          <SidebarTrigger className="h-10 w-10 group-data-[collapsible=icon]:hidden" />
+          <SidebarTrigger className="h-8 w-8 group-data-[collapsible=icon]:hidden" />
         </div>
-        <SidebarTrigger className="mx-auto hidden h-10 group-data-[collapsible=icon]:flex" />
-        <div className="rounded-lg border bg-muted/30 p-1 group-data-[collapsible=icon]:hidden">
+        <SidebarTrigger className="mx-auto hidden h-8 group-data-[collapsible=icon]:flex" />
+        <div className="rounded-md border border-border bg-muted/30 p-1 group-data-[collapsible=icon]:hidden">
           {dualRole ? (
             <div className="grid grid-cols-2 gap-1" aria-label="Workspace switcher">
               <Link
                 href="/client"
-                className={`rounded-md px-2 py-2 text-center text-xs font-medium ${
-                  workspace === "client" ? "bg-background shadow-sm" : "text-muted-foreground"
+                className={`rounded px-2 py-1.5 text-center text-xs font-medium transition-colors ${
+                  workspace === "client"
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Client
               </Link>
               <Link
                 href="/agent-owner"
-                className={`rounded-md px-2 py-2 text-center text-xs font-medium ${
-                  workspace === "agent-owner" ? "bg-background shadow-sm" : "text-muted-foreground"
+                className={`rounded px-2 py-1.5 text-center text-xs font-medium transition-colors ${
+                  workspace === "agent-owner"
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Agent Owner
               </Link>
             </div>
           ) : (
-            <p className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {config.label}
             </p>
           )}
@@ -107,21 +121,33 @@ export function AppSidebar({ workspace }: { workspace: WorkspaceKind }) {
       </SidebarHeader>
       <SidebarContent className="px-2">
         <SidebarGroup>
-          <SidebarGroupLabel>{config.label}</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {config.label}
+          </SidebarGroupLabel>
           <SidebarMenu>
-            {config.navigation.map((item) => {
+            {config.navigation.map((item, index) => {
               const Icon = icons[item.icon as keyof typeof icons];
-              const itemPath = item.url.split("?")[0];
-              const active =
-                itemPath === config.home
-                  ? pathname === itemPath
-                  : pathname.startsWith(itemPath);
+              const active = index === activeIndex;
               return (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
-                    <Link href={item.url} className="flex items-center gap-2">
-                      <Icon className="h-4 w-4" />
-                      <span>{item.title}</span>
+                  {/* One nav treatment for both workspaces: same height, icon
+                      size and radius. Active state is a graphite fill plus a
+                      sand indicator rail, never a bright filled block. */}
+                  <SidebarMenuButton
+                    asChild
+                    isActive={active}
+                    tooltip={item.title}
+                    className="relative h-9 rounded-md text-sm font-medium data-[active=true]:bg-accent data-[active=true]:text-foreground"
+                  >
+                    <Link href={item.url} className="flex items-center gap-2.5">
+                      {active ? (
+                        <span
+                          aria-hidden
+                          className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary"
+                        />
+                      ) : null}
+                      <Icon className="h-4 w-4 shrink-0" />
+                      <span className="truncate">{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -130,11 +156,11 @@ export function AppSidebar({ workspace }: { workspace: WorkspaceKind }) {
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter>
-        <div className="flex flex-col gap-2 px-4 py-2 group-data-[collapsible=icon]:px-0">
-          <Separator className="my-1" />
-          <NavUser workspace={workspace} />
-        </div>
+      {/* Compact: one rule, then the three account rows. The old px-4/py-2
+          wrapper indented the footer out of line with the nav above it. */}
+      <SidebarFooter className="px-2 pb-2">
+        <Separator className="mb-1" />
+        <NavUser workspace={workspace} />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

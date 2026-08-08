@@ -16,6 +16,23 @@ from wallets.services import (
     extract_usdc_balance, select_arc_wallet, sync_wallet_for_existing_user,
 )
 
+
+def email_auth_disabled_response():
+    return Response(
+        {
+            'detail': 'Email sign-in is not available. Continue with Google.',
+            'code': 'email_auth_disabled',
+        },
+        status=410,
+    )
+
+
+def reject_non_google_pending(pending):
+    if pending and pending.auth_method != 'GOOGLE':
+        return email_auth_disabled_response()
+    return None
+
+
 class WalletInitializeView(APIView):
     permission_classes = [AllowAny]
 
@@ -28,6 +45,9 @@ class WalletInitializeView(APIView):
         if not (request.user and request.user.is_authenticated):
             pending = get_pending_from_request(request, user_token=user_token)
             ensure_pending_token_matches(pending, user_token)
+            disabled = reject_non_google_pending(pending)
+            if disabled:
+                return disabled
 
         circle = CircleClient()
         wallets = circle.list_wallets(user_token)
@@ -53,18 +73,25 @@ class WalletSyncView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         user_token = extract_circle_user_token(request)
+
+        pending = None
+        authenticated = request.user and request.user.is_authenticated
+        if not authenticated:
+            pending = get_pending_from_request(request, user_token=user_token)
+            ensure_pending_token_matches(pending, user_token)
+            disabled = reject_non_google_pending(pending)
+            if disabled:
+                return disabled
+
         circle_wallets = CircleClient().list_wallets(user_token)
         circle_wallet = select_arc_wallet(circle_wallets)
         if not circle_wallet:
             raise NotFound('Arc wallet is not available yet. Complete the Circle challenge and retry.')
 
-        pending = None
-        if request.user and request.user.is_authenticated:
+        if authenticated:
             wallet = sync_wallet_for_existing_user(request.user, circle_wallet)
             user = request.user
         else:
-            pending = get_pending_from_request(request, user_token=user_token)
-            ensure_pending_token_matches(pending, user_token)
             try:
                 circle_sso_user_id, circle_wallet = resolve_google_wallet(circle_wallets)
                 user, wallet = bind_google_identity_and_wallet(

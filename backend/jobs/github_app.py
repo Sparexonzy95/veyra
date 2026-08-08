@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -139,7 +141,16 @@ def _request(
 
 
 def create_install_state(*, user_id: str, return_path: str = "/dashboard/jobs") -> str:
-    safe_return = return_path if return_path.startswith("/dashboard") else "/dashboard/jobs"
+    """Create a signed state token for GitHub App installation flow.
+
+    The return_path is preserved if it starts with /client/ or /dashboard/,
+    otherwise defaults to /dashboard/jobs for safety.
+    """
+    safe_return = (
+        return_path
+        if (return_path.startswith("/client/") or return_path.startswith("/dashboard"))
+        else "/dashboard/jobs"
+    )
     return signing.dumps(
         {"user_id": str(user_id), "return_path": safe_return},
         salt=STATE_SALT,
@@ -165,12 +176,72 @@ def parse_install_state(state: str, *, user_id: str) -> dict[str, str]:
 
 
 def install_url(*, user_id: str, return_path: str = "/dashboard/jobs") -> str:
+    """Build the GitHub App *installation* URL the browser should be sent to.
+
+    The result is always of the form:
+
+        https://github.com/apps/<slug>/installations/new?state=<signed-state>
+
+    Two mistakes are rejected outright rather than allowed to fail later as a
+    confusing empty callback:
+
+    * a missing app slug, which would otherwise produce
+      ``https://github.com/apps//installations/new`` - a GitHub 404 that
+      bounces the user back with no installation parameters at all;
+    * an OAuth authorisation endpoint in ``GITHUB_APP_INSTALL_URL``. OAuth
+      authorisation and app installation are different flows: the former
+      returns only ``code``, never ``installation_id``, so the installation
+      could never be linked.
+    """
+    slug = str(getattr(settings, "GITHUB_APP_SLUG", "") or "").strip().strip("/")
     if not app_is_configured():
-        raise GitHubAppError("The Veyra GitHub App is not configured on this server.")
-    slug = str(settings.GITHUB_APP_SLUG).strip()
-    state = create_install_state(user_id=str(user_id), return_path=return_path)
+        # Name the missing settings. "Not configured" on its own sends people
+        # looking at GitHub, when the answer is a blank value on this server.
+        missing = [
+            name
+            for name, present in (
+                ("GITHUB_APP_ID", bool(str(getattr(settings, "GITHUB_APP_ID", "") or "").strip())),
+                ("GITHUB_APP_SLUG", bool(slug)),
+                ("GITHUB_APP_PRIVATE_KEY (or GITHUB_APP_PRIVATE_KEY_PATH)", _configured_key_source()),
+                (
+                    "GITHUB_WEBHOOK_SECRET",
+                    bool(str(getattr(settings, "GITHUB_WEBHOOK_SECRET", "") or "").strip()),
+                ),
+            )
+            if not present
+        ]
+        detail = ", ".join(missing) if missing else "one or more GitHub App settings"
+        raise GitHubAppError(
+            f"The Veyra GitHub App is not configured on this server. Missing: {detail}."
+        )
+
+    if not slug:
+        raise GitHubAppError(
+            "GITHUB_APP_SLUG is not set, so the Veyra GitHub App installation URL "
+            "cannot be built. Set it to the app's slug exactly as it appears in "
+            "its GitHub URL (github.com/apps/<slug>)."
+        )
+
     configured = str(getattr(settings, "GITHUB_APP_INSTALL_URL", "") or "").strip()
-    base = configured or f"https://github.com/apps/{slug}/installations/new"
+    if configured:
+        lowered = configured.lower()
+        if "/login/oauth/authorize" in lowered:
+            raise GitHubAppError(
+                "GITHUB_APP_INSTALL_URL points at the OAuth authorisation endpoint. "
+                "GitHub App installation must use "
+                "https://github.com/apps/<slug>/installations/new, which is the only "
+                "flow that returns an installation_id."
+            )
+        if "/installations/new" not in lowered:
+            raise GitHubAppError(
+                "GITHUB_APP_INSTALL_URL must be the app's installation URL ending in "
+                "/installations/new."
+            )
+        base = configured
+    else:
+        base = f"https://github.com/apps/{slug}/installations/new"
+
+    state = create_install_state(user_id=str(user_id), return_path=return_path)
     separator = "&" if "?" in base else "?"
     return f"{base}{separator}state={quote(state)}"
 
@@ -418,6 +489,219 @@ def list_repository_issues(
         )
     return [item for item in issues if item["number"] and item["html_url"]]
 
+
+
+def _workflow_has_automatic_code_trigger(content: str) -> bool:
+    """Return True when a GitHub Actions workflow can run for code changes.
+
+    Veyra accepts workflows triggered by a pull request or by a push. The worker
+    pushes the exact execution commit before opening the PR, so either trigger
+    can legitimately produce a Check Run for the commit Veyra later verifies.
+    Manual-only/scheduled workflows do not qualify for pre-funding readiness.
+    """
+
+    normalized = str(content or "")
+    if not normalized.strip():
+        return False
+
+    scalar = re.search(
+        r"(?im)^[ \t]*[\"']?on[\"']?[ \t]*:[ \t]*[\"']?(?:push|pull_request|pull_request_target)[\"']?[ \t]*(?:#.*)?$",
+        normalized,
+    )
+    if scalar:
+        return True
+
+    inline = re.search(
+        r"(?im)^[ \t]*[\"']?on[\"']?[ \t]*:[ \t]*\[[^\]]*\b(?:push|pull_request|pull_request_target)\b",
+        normalized,
+    )
+    if inline:
+        return True
+
+    block = re.search(
+        r"(?im)^[ \t]*[\"']?on[\"']?[ \t]*:[ \t]*(?:#[^\n]*)?\n"
+        r"(?P<body>(?:(?:[ \t]+[^\n]*)(?:\n|$))*)",
+        normalized,
+    )
+    if not block:
+        return False
+    return bool(
+        re.search(
+            r"(?im)^[ \t]+[\"']?(?:push|pull_request|pull_request_target)[\"']?[ \t]*:",
+            block.group("body"),
+        )
+    )
+
+
+def _decode_github_content(payload: dict[str, Any]) -> str:
+    if str(payload.get("encoding") or "").lower() != "base64":
+        return ""
+    raw = str(payload.get("content") or "").replace("\n", "")
+    if not raw:
+        return ""
+    try:
+        return base64.b64decode(raw).decode("utf-8", errors="replace")
+    except (ValueError, TypeError):
+        return ""
+
+
+def github_ci_preflight(
+    access: GitHubRepositoryAccess,
+    *,
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Prove that a repository can produce GitHub Check Runs before funding.
+
+    This is deliberately a readiness check, not a promise that future CI will
+    pass. It prevents a client from locking `requireGithubChecks=true` into an
+    escrow when Veyra has no evidence that the repository can produce checks.
+
+    Readiness is satisfied by either:
+      * an automatic GitHub Actions workflow triggered by push / pull request;
+      * existing Check Run history on the selected branch head from any provider.
+
+    Veyra still verifies the exact submitted commit after the worker opens the
+    PR. A historical check here never counts as settlement evidence.
+    """
+
+    if not access.active or access.installation.status != GitHubAppInstallation.Status.CONNECTED:
+        raise GitHubAppError("The repository installation is not active.")
+
+    permissions = access.installation.permissions or {}
+    checks_permission = _permission_satisfies(
+        str(permissions.get("checks") or "none"),
+        "read",
+    )
+    if not checks_permission:
+        return {
+            "repository_id": str(access.id),
+            "repository": access.full_name,
+            "branch": str(branch or access.default_branch or "main"),
+            "ready": False,
+            "checks_permission": False,
+            "workflow_files": [],
+            "automatic_workflows": [],
+            "recent_check_runs": [],
+            "source": "MISSING_CHECKS_PERMISSION",
+            "message": "The Veyra GitHub App cannot read Check Runs for this repository.",
+        }
+
+    token = token_for_repository(access)
+    owner = quote(access.owner, safe="")
+    repository = quote(access.name, safe="")
+    selected_branch = str(branch or access.default_branch or "main").strip() or "main"
+    encoded_branch = quote(selected_branch, safe="")
+
+    workflow_response = _request(
+        "GET",
+        f"/repos/{owner}/{repository}/contents/.github/workflows?ref={encoded_branch}",
+        token=token.token,
+        expected=(200, 404),
+    )
+    workflow_files: list[str] = []
+    automatic_workflows: list[str] = []
+    if workflow_response.status_code == 200:
+        payload = workflow_response.json()
+        if isinstance(payload, list):
+            workflow_items = [
+                item
+                for item in payload[:50]
+                if isinstance(item, dict)
+                and str(item.get("type") or "") == "file"
+                and str(item.get("name") or "").lower().endswith((".yml", ".yaml"))
+            ]
+            for item in workflow_items:
+                name = str(item.get("name") or "").strip()
+                path = str(item.get("path") or "").strip()
+                if not name or not path:
+                    continue
+                workflow_files.append(name)
+                file_response = _request(
+                    "GET",
+                    f"/repos/{owner}/{repository}/contents/{quote(path, safe='/')}?ref={encoded_branch}",
+                    token=token.token,
+                    expected=(200, 404),
+                )
+                if file_response.status_code != 200:
+                    continue
+                file_payload = file_response.json()
+                if isinstance(file_payload, dict) and _workflow_has_automatic_code_trigger(
+                    _decode_github_content(file_payload)
+                ):
+                    automatic_workflows.append(name)
+
+    branch_response = _request(
+        "GET",
+        f"/repos/{owner}/{repository}/branches/{encoded_branch}",
+        token=token.token,
+        expected=(200, 404),
+    )
+    head_sha = ""
+    if branch_response.status_code == 200:
+        branch_payload = branch_response.json()
+        if isinstance(branch_payload, dict):
+            head_sha = str((branch_payload.get("commit") or {}).get("sha") or "").strip().lower()
+
+    recent_check_runs: list[dict[str, str]] = []
+    if head_sha:
+        checks_response = _request(
+            "GET",
+            f"/repos/{owner}/{repository}/commits/{quote(head_sha, safe='')}/check-runs?per_page=100",
+            token=token.token,
+            expected=(200,),
+        )
+        checks_payload = checks_response.json()
+        checks = checks_payload.get("check_runs") if isinstance(checks_payload, dict) else []
+        for item in (checks or [])[:20]:
+            if not isinstance(item, dict):
+                continue
+            app = item.get("app") or {}
+            recent_check_runs.append(
+                {
+                    "name": str(item.get("name") or "")[:160],
+                    "status": str(item.get("status") or "")[:40],
+                    "conclusion": str(item.get("conclusion") or "")[:40],
+                    "app": str(app.get("slug") or app.get("name") or "")[:120],
+                }
+            )
+
+    ready = bool(automatic_workflows or recent_check_runs)
+    if automatic_workflows:
+        source = "AUTOMATIC_WORKFLOW"
+        message = (
+            "GitHub CI is ready. Veyra found an automatic workflow that can create "
+            "Check Runs when the worker pushes or opens a pull request."
+        )
+    elif recent_check_runs:
+        source = "EXISTING_CHECK_PROVIDER"
+        message = (
+            "GitHub CI is ready. Veyra found existing Check Run history from a connected provider."
+        )
+    elif workflow_files:
+        source = "WORKFLOW_NOT_AUTOMATIC"
+        message = (
+            "GitHub workflow files exist, but Veyra could not confirm a push or pull-request trigger. "
+            "Configure automatic CI or choose Veyra verification without required GitHub CI."
+        )
+    else:
+        source = "NO_CI_EVIDENCE"
+        message = (
+            "No GitHub CI configuration or existing Check Run provider was detected for this branch. "
+            "Configure CI first or choose Veyra verification without required GitHub CI."
+        )
+
+    return {
+        "repository_id": str(access.id),
+        "repository": access.full_name,
+        "branch": selected_branch,
+        "ready": ready,
+        "checks_permission": checks_permission,
+        "workflow_files": workflow_files,
+        "automatic_workflows": automatic_workflows,
+        "recent_check_runs": recent_check_runs,
+        "source": source,
+        "message": message,
+    }
 
 def verify_webhook_signature(*, body: bytes, signature: str) -> bool:
     secret = str(getattr(settings, "GITHUB_WEBHOOK_SECRET", "") or "").encode("utf-8")

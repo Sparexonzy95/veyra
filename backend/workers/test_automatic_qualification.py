@@ -9,7 +9,10 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from workers.automatic_qualification import qualification_task_for_connection
+from workers.automatic_qualification import (
+    QUALIFICATION_SPECS,
+    qualification_task_for_connection,
+)
 from workers.hosted_agent_connection import _credential_hash
 from workers.models import HostedAgentConnection, WorkerAgent, WorkerQualificationRun
 
@@ -72,7 +75,7 @@ class AutomaticQualificationTests(TestCase):
         )
 
     def _signed_submission(self, task, source, return_code=0):
-        files = [{"path": "app.py", "content": source}]
+        files = [{"path": task["qualification_target_path"], "content": source}]
         canonical = json.dumps(files, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         files_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         message = (
@@ -95,7 +98,8 @@ class AutomaticQualificationTests(TestCase):
         task = qualification_task_for_connection(self.connection)
         self.assertIsNotNone(task)
         self.assertEqual(task["type"], "automatic_qualification")
-        self.assertEqual(task["allowed_submission_paths"], ["app.py"])
+        self.assertEqual(task["qualification_target_path"], "src/service.py")
+        self.assertEqual(task["allowed_submission_paths"], ["src/service.py"])
         self.worker.refresh_from_db()
         self.assertEqual(self.worker.status, WorkerAgent.Status.TESTING)
         self.assertEqual(self.worker.provisioning_stage, "QUALIFICATION_RUNNING")
@@ -138,3 +142,49 @@ class AutomaticQualificationTests(TestCase):
         self.assertEqual(self.worker.provisioning_stage, "QUALIFICATION_FAILED")
         run = WorkerQualificationRun.objects.get(id=task["id"])
         self.assertEqual(run.status, WorkerQualificationRun.Status.FAILED)
+
+    def test_declared_language_selects_versioned_controlled_target(self):
+        cases = {
+            "Python": "python",
+            "TypeScript": "javascript",
+            "Rust": "rust",
+            "Go": "go",
+            "Solidity": "solidity",
+        }
+        for language, spec_name in cases.items():
+            with self.subTest(language=language):
+                WorkerQualificationRun.objects.filter(worker=self.worker).delete()
+                self.worker.languages = [language]
+                self.worker.skills = [language]
+                self.worker.status = WorkerAgent.Status.READY_FOR_QUALIFICATION
+                self.worker.provisioning_stage = "READY_FOR_QUALIFICATION"
+                self.worker.save(
+                    update_fields=[
+                        "languages",
+                        "skills",
+                        "status",
+                        "provisioning_stage",
+                        "updated_at",
+                    ]
+                )
+                task = qualification_task_for_connection(self.connection)
+                spec = QUALIFICATION_SPECS[spec_name]
+                self.assertEqual(task["task_version"], spec["version"])
+                self.assertEqual(task["qualification_target_path"], spec["target_path"])
+                self.assertEqual(task["allowed_submission_paths"], [spec["target_path"]])
+                self.assertEqual(task["test_command"], spec["test_command"])
+
+    def test_submission_for_old_app_py_target_is_rejected(self):
+        task = qualification_task_for_connection(self.connection)
+        source = QUALIFICATION_SPECS["python"]["expected"]
+        payload = self._signed_submission(task, source)
+        payload["files"][0]["path"] = "app.py"
+        api = APIClient()
+        response = api.post(
+            "/api/v1/agent-runtime/qualification/submit/",
+            data=payload,
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.raw_credential}",
+        )
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertIn("src/service.py", str(response.data))

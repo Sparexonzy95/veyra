@@ -2,10 +2,9 @@
 
 import { NAV_LINKS } from "@/components/landing/landing-content";
 import { VeyraWordmark } from "@/components/landing/veyra-wordmark";
-import { useVeyra } from "@/components/providers/veyra-provider";
 import { cn } from "@/lib/utils";
-import { ArrowRight, Loader2, Menu, X } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { ArrowRight, Menu, X } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 /**
@@ -16,8 +15,6 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
  * luminous lower hero.
  */
 export function LandingHeader() {
-  const { sdkReady } = useVeyra();
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -67,11 +64,6 @@ export function LandingHeader() {
     }
   };
 
-  const enterVeyra = () => {
-    close(false);
-    router.push("/login");
-  };
-
   return (
     <header className="fixed inset-x-0 top-3 z-50 md:top-4">
       <div className="veyra-nav-shell">
@@ -81,8 +73,8 @@ export function LandingHeader() {
             "veyra-nav-glass flex h-[56px] items-center justify-between rounded-full pl-4 pr-2 md:h-[62px] md:pl-5 md:pr-2.5",
           )}
         >
-          <a
-            href="#main"
+          <Link
+            href="/"
             aria-label="Veyra home"
             className="flex shrink-0 items-center rounded-full py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-veyra-cream focus-visible:ring-offset-2 focus-visible:ring-offset-veyra-ink-raised"
           >
@@ -91,7 +83,7 @@ export function LandingHeader() {
               color="var(--veyra-cream)"
               className="w-[96px] md:w-[112px]"
             />
-          </a>
+          </Link>
 
           {/* Desktop links. Gaps tighten on tablet before anything is hidden. */}
           <div className="hidden items-center gap-[18px] lg:flex lg:gap-[26px] xl:gap-[30px] min-[900px]:flex">
@@ -107,22 +99,13 @@ export function LandingHeader() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              onClick={enterVeyra}
-              disabled={!sdkReady}
+            <Link
+              href="/login"
               className="group hidden h-11 items-center gap-2 rounded-full border border-veyra-cream bg-veyra-cream px-5 text-sm font-semibold leading-none text-veyra-ink transition-colors duration-200 hover:bg-veyra-cream-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-veyra-cream focus-visible:ring-offset-2 focus-visible:ring-offset-veyra-ink-raised disabled:pointer-events-none disabled:opacity-60 motion-reduce:transition-none sm:inline-flex md:px-[22px]"
             >
-              Enter Veyra
-              {sdkReady ? (
-                <ArrowRight
-                  className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-[3px] motion-reduce:transition-none motion-reduce:group-hover:translate-x-0"
-                  aria-hidden="true"
-                />
-              ) : (
-                <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-              )}
-            </button>
+              Get Started
+              <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-[3px] motion-reduce:transition-none motion-reduce:group-hover:translate-x-0" aria-hidden="true" />
+            </Link>
 
             <button
               ref={triggerRef}
@@ -165,19 +148,14 @@ export function LandingHeader() {
               ))}
             </ul>
 
-            <button
-              type="button"
-              onClick={enterVeyra}
-              disabled={!sdkReady}
+            <Link
+              href="/login"
+              onClick={() => close(false)}
               className="mt-2 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-full bg-veyra-cream px-5 text-sm font-semibold text-veyra-ink transition-colors duration-200 hover:bg-veyra-cream-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-veyra-cream focus-visible:ring-offset-2 focus-visible:ring-offset-veyra-ink-raised disabled:pointer-events-none disabled:opacity-60 motion-reduce:transition-none sm:hidden"
             >
-              Enter Veyra
-              {sdkReady ? (
-                <ArrowRight className="h-4 w-4" aria-hidden="true" />
-              ) : (
-                <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-              )}
-            </button>
+              Get Started
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
           </div>
         ) : null}
       </div>

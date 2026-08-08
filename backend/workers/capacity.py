@@ -11,9 +11,6 @@ ACTIVE_ASSIGNMENT_STATUSES = {
     WorkerJobAssignment.Status.EXECUTING,
     WorkerJobAssignment.Status.RESULT_RECEIVED,
     WorkerJobAssignment.Status.SUBMITTING,
-    WorkerJobAssignment.Status.SUBMITTED,
-    WorkerJobAssignment.Status.VERIFYING,
-    WorkerJobAssignment.Status.SETTLING,
 }
 
 
@@ -25,7 +22,10 @@ def active_assignment_count(
     """Return authoritative worker capacity usage.
 
     Queue rows are discovery projections and can outlive a released or failed
-    assignment. Only an active assignment may consume execution capacity.
+    assignment. Capacity represents coding-runtime responsibility only. The
+    coding slot stays occupied through PR/on-chain submission and is released
+    once the assignment reaches SUBMITTED. Independent verification and Arc
+    settlement do not keep the coding agent artificially busy.
     """
 
     values = WorkerJobAssignment.objects.filter(

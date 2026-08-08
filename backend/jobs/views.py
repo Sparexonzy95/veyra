@@ -12,11 +12,13 @@ from jobs.github import fetch_issue, parse_issue_url
 from jobs.github_app import repository_access_for_url, token_for_repository
 from jobs.models import JobDraft, Notification, VeyraJob
 from jobs.serializers import GithubIssuePreviewSerializer, JobDraftSerializer, JobSummarySerializer, NotificationSerializer
-from jobs.services import create_approval_challenge, create_contextual_action_challenge, create_job_challenge, refresh_job_projection
+from jobs.services import create_approval_challenge, create_contextual_action_challenge, create_job_challenge, ensure_required_github_ci_ready, refresh_job_projection
 from blockchain.services import available_client_action
 from wallets.models import CircleTransaction, WalletAccount
 from wallets.services import extract_circle_user_token
 from workers.execution_status import job_execution_snapshot
+from workers.execution_recovery import RuntimeRetryRefused, retry_existing_runtime_assignment
+from workers.models import WorkerJobAssignment
 from wallets.transaction_sync import (
     attach_circle_transaction, mark_challenge_completed, sync_transaction,
     transaction_payload,
@@ -119,12 +121,14 @@ class JobDraftViewSet(viewsets.ModelViewSet):
             repository=draft.repository_name,
         )
 
+
     @action(detail=True, methods=['post'])
     def review(self, request, pk=None):
         draft = self.get_object()
         if draft.status not in [JobDraft.Status.DRAFT, JobDraft.Status.READY]:
             raise ValidationError('This job is already locked for funding.')
         self._assert_repository_ready(draft)
+        ci_preflight = ensure_required_github_ci_ready(draft)
         draft.status = JobDraft.Status.READY
         draft.save(update_fields=['status', 'updated_at'])
         return Response({
@@ -135,6 +139,12 @@ class JobDraftViewSet(viewsets.ModelViewSet):
             'deadline': draft.deadline,
             'acceptance_criteria': draft.acceptance_criteria,
             'payment_protection': 'Funds remain locked until work passes verification.',
+            'verification_requirements': {
+                'veyra_independent_verification': True,
+                'funded_validation': True,
+                'github_ci_required': bool((draft.advanced_options or {}).get('require_github_checks', False)),
+                'github_ci_preflight': ci_preflight,
+            },
         })
 
     @action(detail=True, methods=['post'], url_path='approval-challenge')
@@ -176,12 +186,55 @@ class ClientJobViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewset
             'onchain': onchain,
             'available_action': available_client_action(onchain) if onchain else None,
             'execution': job_execution_snapshot(job),
+            'verification_requirements': {
+                'veyra_independent_verification': True,
+                'funded_validation': True,
+                'github_ci_required': bool(
+                    (getattr(job.draft, 'funding_snapshot', None) and
+                     (job.draft.funding_snapshot.policy_commitment or {}).get('requireGithubChecks', False))
+                ),
+            },
         })
         return Response(data)
 
     @action(detail=True, methods=['post'], url_path='action-challenge')
     def action_challenge(self, request, onchain_job_id=None):
         return Response(create_contextual_action_challenge(self.get_object(), extract_circle_user_token(request)))
+
+    @action(detail=True, methods=['post'], url_path='retry-execution')
+    def retry_execution(self, request, onchain_job_id=None):
+        job = self.get_object()
+        try:
+            assignment = job.worker_assignment
+        except WorkerJobAssignment.DoesNotExist:
+            return Response(
+                {
+                    'error': {
+                        'code': 'ASSIGNMENT_NOT_FOUND',
+                        'message': 'This job has no existing assignment to retry.',
+                    },
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        try:
+            assignment, changed = retry_existing_runtime_assignment(assignment)
+        except RuntimeRetryRefused as exc:
+            return Response(
+                {'error': {'code': exc.code, 'message': str(exc)}},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({
+            'code': 'EXECUTION_RETRY_SCHEDULED' if changed else 'EXECUTION_RETRY_ALREADY_SCHEDULED',
+            'message': (
+                'The failed execution step was queued again on the existing funded job.'
+                if changed else
+                'This execution retry is already queued on the existing funded job.'
+            ),
+            'job_id': int(job.onchain_job_id),
+            'assignment_id': str(assignment.id),
+            'assignment_attempt': int(assignment.assignment_attempt),
+            'claim_preserved': True,
+        })
 
 class DashboardView(APIView):
     permission_classes = [HasClientCapability]

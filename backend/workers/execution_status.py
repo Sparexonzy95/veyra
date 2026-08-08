@@ -7,6 +7,7 @@ from typing import Any
 from django.utils import timezone
 
 from blockchain.client import redact_rpc_text
+from workers.capacity import ACTIVE_ASSIGNMENT_STATUSES
 from workers.models import (
     WorkerAgent,
     WorkerJobAssignment,
@@ -14,21 +15,14 @@ from workers.models import (
     WorkerVerificationAssignment,
 )
 from workers.execution_control import controller_public_snapshot
+from workers.execution_recovery import can_retry_existing_runtime_assignment
 from workers.runtime_status import runtime_snapshot
 
 
-ACTIVE_STATUSES = {
-    WorkerJobAssignment.Status.RESERVED,
-    WorkerJobAssignment.Status.CLAIMING,
-    WorkerJobAssignment.Status.CLAIMED,
-    WorkerJobAssignment.Status.LEASED,
-    WorkerJobAssignment.Status.EXECUTING,
-    WorkerJobAssignment.Status.RESULT_RECEIVED,
-    WorkerJobAssignment.Status.SUBMITTING,
-    WorkerJobAssignment.Status.SUBMITTED,
-    WorkerJobAssignment.Status.VERIFYING,
-    WorkerJobAssignment.Status.SETTLING,
-}
+# Keep the owner-facing "active jobs" count aligned with matcher capacity.
+# SUBMITTED/VERIFYING/SETTLING remain visible in recent work, but they no longer
+# imply that the coding runtime is occupied.
+ACTIVE_STATUSES = set(ACTIVE_ASSIGNMENT_STATUSES)
 
 STAGE_LABELS = {
     WorkerJobAssignment.Status.RESERVED: "Agent selected",
@@ -45,6 +39,29 @@ STAGE_LABELS = {
     WorkerJobAssignment.Status.RELEASED: "Released for reassignment",
     WorkerJobAssignment.Status.FAILED: "Needs attention",
 }
+
+_JSON_PARSE_FAILURE_MARKERS = (
+    "expecting value: line 1 column",
+    "jsondecodeerror",
+    "returned malformed json",
+    "returned malformed or incomplete json",
+    "could not read as json",
+)
+
+
+def _public_failure(stage: str, message: str) -> tuple[str, str]:
+    """Return a stable client-facing failure contract, never parser internals."""
+    safe_message = redact_rpc_text(str(message or ""))
+    lowered = safe_message.casefold()
+    if stage == "runtime_execution" and any(
+        marker in lowered for marker in _JSON_PARSE_FAILURE_MARKERS
+    ):
+        return (
+            "AI_RESPONSE_INVALID",
+            "The agent received an incomplete or non-JSON AI response. "
+            "Veyra can retry this execution attempt without creating or funding another job.",
+        )
+    return (stage, safe_message)
 
 
 def _iso(value):
@@ -63,12 +80,21 @@ def assignment_public_snapshot(assignment: WorkerJobAssignment | None) -> dict[s
     except WorkerVerificationAssignment.DoesNotExist:
         verifier_value = None
     runtime_value = runtime_snapshot(worker)
+    runtime_progress = runtime_value.get("progress")
+    if not isinstance(runtime_progress, dict):
+        runtime_progress = {}
+    current_job_progress = runtime_progress.get("job")
+    if not isinstance(current_job_progress, dict) or str(
+        current_job_progress.get("assignment_id") or ""
+    ) != str(assignment.id):
+        current_job_progress = None
     runtime_public = {
         "status": runtime_value.get("status"),
         "connected": bool(runtime_value.get("connected")),
         "provider_ready": bool(runtime_value.get("provider_ready")),
         "last_seen_at": _iso(runtime_value.get("last_seen_at")),
         "health_message": str(runtime_value.get("health_message") or ""),
+        "progress": current_job_progress,
     }
     attention_code = ""
     attention_message = ""
@@ -95,6 +121,15 @@ def assignment_public_snapshot(assignment: WorkerJobAssignment | None) -> dict[s
 
     verifier = None
     if verifier_value is not None:
+        verifier_runtime = runtime_snapshot(verifier_value.verifier)
+        verifier_runtime_progress = verifier_runtime.get("progress")
+        if not isinstance(verifier_runtime_progress, dict):
+            verifier_runtime_progress = {}
+        verification_progress = verifier_runtime_progress.get("verification")
+        if not isinstance(verification_progress, dict) or str(
+            verification_progress.get("assignment_id") or ""
+        ) != str(verifier_value.id):
+            verification_progress = None
         verifier = {
             "id": str(verifier_value.id),
             "status": verifier_value.status,
@@ -117,6 +152,7 @@ def assignment_public_snapshot(assignment: WorkerJobAssignment | None) -> dict[s
             "evidence_hash": verifier_value.evidence_hash,
             "summary": str((verifier_value.report or {}).get("summary") or ""),
             "failure_message": verifier_value.failure_message,
+            "progress": verification_progress,
         }
     failure_history = [
         {
@@ -142,6 +178,10 @@ def assignment_public_snapshot(assignment: WorkerJobAssignment | None) -> dict[s
             )
         active_failure_stage = ""
         active_failure_message = ""
+    public_failure_stage, public_failure_message = _public_failure(
+        active_failure_stage,
+        active_failure_message,
+    )
     return {
         "id": str(assignment.id),
         "job_id": int(job.onchain_job_id),
@@ -187,8 +227,9 @@ def assignment_public_snapshot(assignment: WorkerJobAssignment | None) -> dict[s
         "independent_verifier": verifier,
         "settlement_transaction_hash": str(assignment.settlement_transaction_hash or ""),
         "settlement_confirmed_at": _iso(assignment.settlement_confirmed_at),
-        "failure_stage": active_failure_stage,
-        "failure_message": redact_rpc_text(active_failure_message),
+        "failure_stage": public_failure_stage,
+        "failure_message": public_failure_message,
+        "retryable": can_retry_existing_runtime_assignment(assignment),
         "failure_history": failure_history,
         "created_at": _iso(assignment.created_at),
         "updated_at": _iso(assignment.updated_at),

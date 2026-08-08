@@ -378,6 +378,45 @@ class WorkerAgent(TimeStampedModel):
         super().save(*args, **kwargs)
 
 
+class AgentWithdrawal(TimeStampedModel):
+    class Status(models.TextChoices):
+        SUBMITTING = "SUBMITTING", "Submitting"
+        PENDING = "PENDING", "Pending"
+        COMPLETED = "COMPLETED", "Completed"
+        FAILED = "FAILED", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    worker = models.ForeignKey(
+        WorkerAgent, related_name="withdrawals", on_delete=models.PROTECT
+    )
+    owner_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, related_name="agent_withdrawals", on_delete=models.PROTECT
+    )
+    destination_address = models.CharField(max_length=42, validators=[evm_address_validator])
+    amount_usdc = models.DecimalField(max_digits=30, decimal_places=6)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.SUBMITTING)
+    idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    circle_transaction_id = models.CharField(max_length=128, blank=True, unique=True, null=True)
+    arc_transaction_hash = models.CharField(max_length=66, blank=True)
+    failure_message = models.TextField(blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["worker", "status"], name="workers_age_worker__b615e7_idx"),
+            models.Index(
+                fields=["owner_user", "created_at"],
+                name="workers_age_owner_u_68ba70_idx",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.destination_address = self.destination_address.lower()
+        super().save(*args, **kwargs)
+
+
 class HostedAgentConnection(TimeStampedModel):
     """Owner-hosted runtime identity connected through a one-time copy link.
 

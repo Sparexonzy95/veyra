@@ -1,31 +1,50 @@
 "use client";
 
 import { AgentCard } from "@/components/agents/agent-card";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { Panel } from "@/components/dashboard/panel";
+import {
+  DashboardPagination,
+  PAGE_SIZE,
+  pageCount,
+  usePageParam,
+} from "@/components/dashboard/pagination";
+import { EmptyState, ErrorState, LoadingCards } from "@/components/dashboard/states";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 import type { PaginatedAgents } from "@/types/veyra";
-import { Bot, CheckCircle2, CircleDollarSign, Plus, Radio } from "lucide-react";
+import { Bot, Plus } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export default function AgentsPage() {
   const [data, setData] = useState<PaginatedAgents | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { page, setPage } = usePageParam();
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
-      setData(await apiFetch<PaginatedAgents>("/api/v1/agents/"));
-      setError(null);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Agents could not be loaded.");
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, []);
+  // `/api/v1/agents/` is a DRF ViewSet, so this is real server-side paging:
+  // the page number goes to the API and only that page is fetched. The
+  // polling refresh below re-requests the current page, not page 1, so a
+  // ten-second tick cannot yank the user back to the start of the list.
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        setData(
+          await apiFetch<PaginatedAgents>(
+            `/api/v1/agents/?page=${page}&page_size=${PAGE_SIZE.cards}`,
+          ),
+        );
+        setError(null);
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Agents could not be loaded.");
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [page],
+  );
 
   useEffect(() => {
     void load();
@@ -36,106 +55,67 @@ export default function AgentsPage() {
   }, [load]);
 
   const agents = data?.results ?? [];
-  const active = agents.filter((agent) => agent.status === "ACTIVE").length;
-  const connected = agents.filter((agent) => agent.runtime.connected).length;
-  const qualified = agents.filter((agent) => agent.test_assignment_passed).length;
+  const totalPages = pageCount(data?.count ?? 0, PAGE_SIZE.cards);
+  const gridRef = useRef<HTMLDivElement | null>(null);
 
   return (
-    <div className="space-y-7">
-      <div className="flex flex-col justify-between gap-5 border-b pb-6 sm:flex-row sm:items-end">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Agent workspace</p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Agents</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Connect, qualify and manage your Agent Starters.
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/agent-owner/agents/new">
-            <Plus className="h-4 w-4" /> Create Agent
-          </Link>
-        </Button>
-      </div>
+    <>
+      <PageHeader
+        title="Agents"
+        description="Connect, qualify and manage your Agent Starters."
+        actions={
+          <Button size="sm" asChild>
+            <Link href="/agent-owner/agents/new">
+              <Plus className="mr-1.5 h-4 w-4" /> Create Agent
+            </Link>
+          </Button>
+        }
+      />
 
-      {error ? (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
+      {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Agents</CardTitle>
-            <Bot className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{data?.count ?? 0}</div>
-            <p className="text-xs text-muted-foreground">Owned by this workspace</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Connected</CardTitle>
-            <Radio className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{connected}</div>
-            <p className="text-xs text-muted-foreground">Ready to communicate with Veyra</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Qualified</CardTitle>
-            <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{qualified}</div>
-            <p className="text-xs text-muted-foreground">Passed the coding check</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active</CardTitle>
-            <CircleDollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{active}</div>
-            <p className="text-xs text-muted-foreground">Eligible for matching</p>
-          </CardContent>
-        </Card>
-      </div>
-
+      {/* The stat band that used to sit here duplicated the Agent summary on
+          the Overview page. It also could not survive server-side paging:
+          "Connected" and "Qualified" were counted from the loaded page, so
+          they would have silently meant "on this page" once the list was cut
+          to six. Overview owns the summary; this page owns the list, and the
+          honest total is the count in the pagination bar. */}
       {loading ? (
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, index) => (
-            <Skeleton key={index} className="h-96 rounded-xl" />
-          ))}
+        <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <LoadingCards count={3} />
         </div>
       ) : agents.length ? (
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-          {agents.map((agent) => (
-            <AgentCard key={agent.id} agent={agent} />
-          ))}
+        <div ref={gridRef} className="space-y-4">
+          <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {agents.map((agent) => (
+              <AgentCard key={agent.id} agent={agent} />
+            ))}
+          </div>
+          <DashboardPagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={data?.count}
+            onPageChange={setPage}
+            scrollTargetRef={gridRef}
+            className="rounded-lg border border-border bg-card"
+          />
         </div>
       ) : (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-              <Bot className="h-7 w-7" />
-            </div>
-            <h2 className="text-lg font-semibold">Create your first agent</h2>
-            <p className="mt-2 max-w-md text-sm text-muted-foreground">
-              Download the Agent Starter, configure and host it, then paste its connection URL to Test &amp; Connect.
-            </p>
-            <Button className="mt-6" asChild>
-              <Link href="/agent-owner/agents/new">
-                <Plus className="h-4 w-4" /> Create Agent
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <Panel>
+          <EmptyState
+            icon={Bot}
+            title="Create your first agent"
+            description="Download the Agent Starter, host it, then paste its connection URL to test and connect."
+            action={
+              <Button size="sm" asChild>
+                <Link href="/agent-owner/agents/new">
+                  <Plus className="mr-1.5 h-4 w-4" /> Create Agent
+                </Link>
+              </Button>
+            }
+          />
+        </Panel>
       )}
-    </div>
+    </>
   );
 }

@@ -550,6 +550,36 @@ def mark_runtime_heartbeat(
     model_name = str(payload.get("model") or connection.model_name).strip()
     message = str(payload.get("message") or "").strip()[:240]
 
+    metadata = dict(connection.metadata or {})
+    runtime_progress = dict(metadata.get("runtime_progress") or {})
+
+    job_assignment_id = str(payload.get("job_assignment_id") or "").strip()[:80]
+    if job_assignment_id:
+        runtime_progress["job"] = {
+            "assignment_id": job_assignment_id,
+            "job_id": str(payload.get("job_onchain_id") or "").strip()[:32],
+            "status": str(payload.get("job_status") or "").strip()[:40],
+            "phase": str(payload.get("job_phase") or "").strip()[:80],
+            "message": str(payload.get("job_message") or "").strip()[:500],
+            "updated_at": str(payload.get("job_updated_at") or "").strip()[:64],
+        }
+
+    verification_assignment_id = str(
+        payload.get("verification_assignment_id") or ""
+    ).strip()[:80]
+    if verification_assignment_id:
+        runtime_progress["verification"] = {
+            "assignment_id": verification_assignment_id,
+            "status": str(payload.get("verification_status") or "").strip()[:40],
+            "phase": str(payload.get("verification_phase") or "").strip()[:80],
+            "message": str(payload.get("verification_message") or "").strip()[:500],
+            "updated_at": str(payload.get("verification_updated_at") or "").strip()[:64],
+        }
+
+    if runtime_progress:
+        metadata["runtime_progress"] = runtime_progress
+    connection.metadata = metadata
+
     connection.provider_ready = provider_ready
     connection.runtime_version = runtime_version[:64]
     connection.model_name = model_name[:160]
@@ -568,6 +598,7 @@ def mark_runtime_heartbeat(
             "last_seen_at",
             "last_error",
             "status",
+            "metadata",
             "updated_at",
         ]
     )

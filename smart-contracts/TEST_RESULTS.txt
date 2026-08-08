@@ -1,0 +1,62 @@
+
+> @veyra/custom-escrow-contracts@0.4.0 test
+> hardhat test
+
+Compiled 6 Solidity files successfully (evm target: paris).
+
+
+  VeyraJobEscrow
+    deployment and administration
+      ✔ rejects a token address without contract code
+      ✔ rejects an unsafe verification grace-period configuration
+      ✔ rejects an unsafe claim-to-submission period
+      ✔ uses two-step ownership transfer
+      ✔ allows only the owner to manage agent and verifier authorisation
+      ✔ rejects direct native-token transfers
+    job funding and claiming
+      ✔ creates a fully funded job and locks its commitments
+      ✔ rejects zero budget, zero commitments, bad expiry, and unauthorised verifier
+      ✔ rejects fee-on-transfer funding instead of under-collateralising the job
+      ✔ allows an authorised agent to claim an open job
+      ✔ rejects a client inviting itself as the provider
+      ✔ enforces independent client, worker, and verifier roles
+      ✔ enforces invited-agent and authorisation restrictions
+      ✔ prevents a client from claiming their own job
+      ✔ lets the client cancel only an unclaimed job and receive a full refund
+      ✔ does not allow cancellation after an agent claims
+    submission
+      ✔ records the exact commit, pull request, and canonical deliverable hash
+      ✔ allows only the assigned provider to submit
+      ✔ rejects empty commit or pull-request commitments
+      ✔ rejects submissions after the deadline
+      ✔ blocks a claimed agent after its authorisation is revoked
+    successful verification and Karma
+      ✔ pays the exact agent, closes escrow, and awards Karma
+      ✔ awards Karma once per unique client while counting every completed job
+      ✔ awards additional Karma when a genuinely different client is served
+      ✔ records a completed low-value job without awarding Karma
+      ✔ blocks a verifier immediately after its authorisation is revoked
+      ✔ allows verification after submission deadline but within the grace period
+      ✔ binds verification evidence to this job, deliverable, verdict, and report
+      ✔ requires the exact job verifier and exact deliverable
+      ✔ cannot pay a job twice
+      ✔ rolls back all state if the token payout fails
+    rejection and refunds
+      ✔ lets only the verifier reject the exact submission and atomically refunds the client
+      ✔ rejects wrong verifier, wrong deliverable, and empty evidence
+      ✔ refunds an unclaimed expired job and a stale claimed job
+      ✔ protects a submitted job during the verifier grace period, then allows expiry refund
+      ✔ starts the verifier timeout at submission instead of the far-away job deadline
+      ✔ refunds a stale claim before a long job reaches its final expiry
+      ✔ prevents early, unauthorised, and duplicate refunds
+    pause and fund safety
+      ✔ pause blocks new work actions but never blocks client cancellation/refund
+      ✔ blocks a malicious payment token from re-entering job creation
+      ✔ blocks cross-function reentrancy during an agent payout
+      ✔ keeps token balance equal to active escrow across mixed job outcomes
+      ✔ never permits a rejected job to be paid or refunded twice
+      ✔ prevents verification or rejection once the grace period has ended
+      ✔ owner can recover accidental excess USDC but cannot touch active escrow
+
+
+  45 passing (2s)

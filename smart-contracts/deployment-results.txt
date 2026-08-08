@@ -1,0 +1,39 @@
+**********************
+Windows PowerShell transcript start
+Start time: 20260718122617
+Username: DESKTOP-GTVCO4N\cashkink
+RunAs User: DESKTOP-GTVCO4N\cashkink
+Configuration Name:
+Machine: DESKTOP-GTVCO4N (Microsoft Windows NT 10.0.26100.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe
+Process ID: 36608
+PSVersion: 5.1.26100.4202
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.4202
+BuildVersion: 10.0.26100.4202
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is .\deployment-results.txt
+PS C:\Users\cashkink\Downloads\Veyra\Veyra-Contract> npm run deploy:arc
+
+> @veyra/custom-escrow-contracts@0.4.0 deploy:arc
+> hardhat run scripts/deploy.cjs --network arcTestnet
+
+Network: Arc Testnet (5042002)
+Deployer: 0x0EdBC6F8506e72478CE78a4AE934C7b21cb7050A
+Payment token: 0x3600000000000000000000000000000000000000 USDC decimals=6
+Verification grace: 86400 seconds
+Claim-to-submission period: 43200 seconds
+Minimum Karma budget: 1000000 base units
+
+VeyraJobEscrow: 0xe422ba48559A4ef5B1fad8A5AAc4F646b252d9F5
+Transaction: 0xa2442ecd2d898db319dc7fee03643ca5ebb282f9b0f6e8b4370739840529b2a7
+Deployment record: C:\Users\cashkink\Downloads\Veyra\Veyra-Contract\deployments\arc-testnet.json
+PS C:\Users\cashkink\Downloads\Veyra\Veyra-Contract> Stop-Transcript
+**********************
+Windows PowerShell transcript end
+End time: 20260718122645
+**********************

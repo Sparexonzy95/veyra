@@ -372,7 +372,7 @@ def _wait_circle(
     sleep_fn: Callable[[float], None],
 ) -> CircleClaimTransaction:
     timeout = int(getattr(settings, "WORKER_SUBMISSION_TIMEOUT_SECONDS", 180))
-    interval = float(getattr(settings, "WORKER_SUBMISSION_POLL_INTERVAL_SECONDS", 3))
+    interval = float(getattr(settings, "WORKER_SUBMISSION_POLL_INTERVAL_SECONDS", 2))
     deadline = time.monotonic() + max(timeout, 0)
     current = initial
     while True:
@@ -399,7 +399,7 @@ def _wait_receipt(
     sleep_fn: Callable[[float], None],
 ) -> Any:
     timeout = int(getattr(settings, "WORKER_ARC_RECEIPT_TIMEOUT_SECONDS", 120))
-    interval = float(getattr(settings, "WORKER_SUBMISSION_POLL_INTERVAL_SECONDS", 3))
+    interval = float(getattr(settings, "WORKER_SUBMISSION_POLL_INTERVAL_SECONDS", 2))
     deadline = time.monotonic() + max(timeout, 0)
     while True:
         receipt = arc.transaction_receipt_or_none(tx_hash)

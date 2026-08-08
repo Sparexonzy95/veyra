@@ -1,5 +1,6 @@
 "use client";
 
+import { clearOwnedAgentsCache } from "@/components/agents/use-owned-agents";
 import { ApiError, apiFetch, postJson } from "@/lib/api";
 import { resolveAuthDestination } from "@/lib/auth-destination";
 import { circleErrorMessage, extractCircleTransactionId } from "@/lib/circle/result";
@@ -39,6 +40,8 @@ export type AuthUiPhase =
   | "routing"
   | "error";
 
+export type WalletSetupPhase = "preparing" | "approval" | "ready" | "error";
+
 type ContextValue = {
   sdkReady: boolean;
   busy: boolean;
@@ -49,9 +52,13 @@ type ContextValue = {
   circleSession: CircleSession | null;
   roleDialogOpen: boolean;
   walletSetupOpen: boolean;
+  walletSetupPhase: WalletSetupPhase;
   loginWithGoogle: () => Promise<void>;
   chooseClientRole: () => Promise<void>;
   chooseAgentOwnerRole: () => Promise<void>;
+  continueWalletSetup: () => void;
+  retryWalletSetup: () => Promise<void>;
+  cancelWalletSetup: () => void;
   logout: () => Promise<void>;
   refreshMe: () => Promise<MeResponse>;
   executeChallenge: (challengeId: string) => Promise<unknown>;
@@ -184,6 +191,8 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
   const callbackRef = useRef<(result: CircleSdkResult) => Promise<void>>(async () => {});
   const loginExchangeRef = useRef<Promise<void> | null>(null);
   const redirectStartedRef = useRef(false);
+  const walletRedirectRef = useRef("/workspace");
+  const walletModeRef = useRef<"CLIENT" | "IDENTITY">("CLIENT");
   const [sdkReady, setSdkReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [authPhase, setAuthPhase] = useState<AuthUiPhase>("initializing");
@@ -193,6 +202,7 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
   const [circleSession, setCircleSession] = useState<CircleSession | null>(null);
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
   const [walletSetupOpen, setWalletSetupOpen] = useState(false);
+  const [walletSetupPhase, setWalletSetupPhase] = useState<WalletSetupPhase>("preparing");
 
   const refreshMe = useCallback(async () => {
     try {
@@ -299,55 +309,83 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
     redirectPath = "/workspace",
     mode: "CLIENT" | "IDENTITY" = "CLIENT",
   ) => {
+    walletRedirectRef.current = redirectPath;
+    walletModeRef.current = mode;
     setWalletSetupOpen(true);
-    setStatus(
-      mode === "CLIENT"
-        ? "Setting up your client escrow wallet…"
-        : "Finishing secure account sign-in…",
-    );
-    const body = {
-      circle_user_id: session.circleUserId ?? "",
-      auth_method: session.authMethod,
-      email: session.email ?? "",
-      display_name: session.displayName ?? "",
-    };
-    const init = await postJson<{
-      wallet_exists: boolean;
-      requires_sync?: boolean;
-      challenge_id?: string;
-    }>("/api/v1/client/wallet/initialize/", body, session.userToken);
+    setWalletSetupPhase("preparing");
+    setStatus("Preparing your Arc wallet");
+    try {
+      const body = {
+        circle_user_id: session.circleUserId ?? "",
+        auth_method: session.authMethod,
+        email: session.email ?? "",
+        display_name: session.displayName ?? "",
+      };
+      const init = await postJson<{
+        wallet_exists: boolean;
+        requires_sync?: boolean;
+        challenge_id?: string;
+      }>("/api/v1/client/wallet/initialize/", body, session.userToken);
 
-    if (init.challenge_id) {
-      setStatus("Confirm wallet setup in the Circle window.");
-      await executeChallenge(init.challenge_id);
-      await new Promise((resolve) => window.setTimeout(resolve, 1500));
-    }
-
-    setStatus("Finishing wallet setup…");
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      try {
-        await postJson("/api/v1/client/wallet/sync/", body, session.userToken);
-        const nextMe = await refreshMe();
-        setWalletSetupOpen(false);
-        setStatus(null);
-        setRoleDialogOpen(false);
-        if (nextMe.authenticated) {
-          toast.success(
-            mode === "CLIENT"
-              ? "Your client wallet is ready."
-              : "Secure sign-in is ready. Each agent will receive a separate wallet.",
-          );
-          router.replace(redirectPath);
-          return;
-        }
-      } catch (syncError) {
-        lastError = syncError;
+      if (init.challenge_id) {
+        setWalletSetupPhase("approval");
+        setStatus("Approve wallet setup");
+        await executeChallenge(init.challenge_id);
         await new Promise((resolve) => window.setTimeout(resolve, 1500));
       }
+
+      setWalletSetupPhase("preparing");
+      setStatus("Preparing your Arc wallet");
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        try {
+          await postJson("/api/v1/client/wallet/sync/", body, session.userToken);
+          const nextMe = await refreshMe();
+          if (nextMe.authenticated) {
+            setWalletSetupPhase("ready");
+            setStatus("Wallet ready");
+            setRoleDialogOpen(false);
+            return;
+          }
+        } catch (syncError) {
+          lastError = syncError;
+          await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        }
+      }
+      throw lastError ?? new Error("Wallet is not available yet.");
+    } catch {
+      setWalletSetupPhase("error");
+      setStatus("Wallet setup failed");
+      setBusy(false);
     }
-    throw lastError ?? new Error("Circle wallet is not available yet.");
-  }, [executeChallenge, refreshMe, router]);
+  }, [executeChallenge, refreshMe]);
+
+  const continueWalletSetup = useCallback(() => {
+    if (walletSetupPhase !== "ready") return;
+    setWalletSetupOpen(false);
+    setStatus(null);
+    toast.success("Your Arc wallet is ready.");
+    router.replace(walletRedirectRef.current);
+  }, [router, walletSetupPhase]);
+
+  const retryWalletSetup = useCallback(async () => {
+    const session = circleSession ?? readSession();
+    if (!session) {
+      setWalletSetupPhase("error");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    await prepareWallet(session, walletRedirectRef.current, walletModeRef.current);
+    setBusy(false);
+  }, [circleSession, prepareWallet]);
+
+  const cancelWalletSetup = useCallback(() => {
+    if (walletSetupPhase !== "error") return;
+    setWalletSetupOpen(false);
+    setStatus(null);
+    setBusy(false);
+  }, [walletSetupPhase]);
 
   const processLogin = useCallback(async (result: CircleSdkResult) => {
     if (loginExchangeRef.current) return loginExchangeRef.current;
@@ -396,11 +434,12 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (exchange.requires_wallet_setup) {
-          setRoleDialogOpen(true);
+          setRoleDialogOpen(false);
           setBusy(false);
           setStatus(null);
           setAuthPhase("idle");
           loginExchangeRef.current = null;
+          router.replace("/workspace");
           return;
         }
 
@@ -417,7 +456,7 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
 
     loginExchangeRef.current = exchangePromise;
     return exchangePromise;
-  }, [refreshMe, routeAuthenticatedUser]);
+  }, [refreshMe, routeAuthenticatedUser, router]);
 
   callbackRef.current = processLogin;
 
@@ -616,6 +655,10 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
     try { await postJson("/api/v1/auth/logout/", {}); } catch { /* clear locally anyway */ }
     saveSession(null);
     saveLoginConfig(null);
+    // The agents cache outlives a page render, so it has to be dropped here
+    // or the next account to sign in on this tab would briefly see the
+    // previous owner's agents.
+    clearOwnedAgentsCache();
     setCircleSession(null);
     setMe(null);
     setRoleDialogOpen(false);
@@ -637,9 +680,13 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
     circleSession,
     roleDialogOpen,
     walletSetupOpen,
+    walletSetupPhase,
     loginWithGoogle,
     chooseClientRole,
     chooseAgentOwnerRole,
+    continueWalletSetup,
+    retryWalletSetup,
+    cancelWalletSetup,
     logout,
     refreshMe,
     executeChallenge,
@@ -647,8 +694,9 @@ export function VeyraProvider({ children }: { children: React.ReactNode }) {
     circleToken: circleSession?.userToken ?? null,
   }), [
     sdkReady, busy, authPhase, status, error, me, circleSession, roleDialogOpen,
-    walletSetupOpen, loginWithGoogle, chooseClientRole,
-    chooseAgentOwnerRole, logout, refreshMe, executeChallenge, executeTrackedChallenge,
+    walletSetupOpen, walletSetupPhase, loginWithGoogle, chooseClientRole,
+    chooseAgentOwnerRole, continueWalletSetup, retryWalletSetup, cancelWalletSetup,
+    logout, refreshMe, executeChallenge, executeTrackedChallenge,
   ]);
 
   return <VeyraContext.Provider value={value}>{children}</VeyraContext.Provider>;

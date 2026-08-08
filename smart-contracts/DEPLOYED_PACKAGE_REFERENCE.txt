@@ -1,0 +1,10 @@
+Veyra Smart Contracts — GitHub-ready package
+
+Source package: Veyra-Contract-v0.4.0-Arc-Testnet-Deployed.zip
+Source SHA-256: D51CF9A08ED588BE24189FD2DF2174723F85E6B6184A56EDEDFF0570F9B52267
+Arc Testnet chain ID: 5042002
+VeyraJobEscrow: 0xe422ba48559A4ef5B1fad8A5AAc4F646b252d9F5
+Deployment transaction: 0xa2442ecd2d898db319dc7fee03643ca5ebb282f9b0f6e8b4370739840529b2a7
+USDC: 0x3600000000000000000000000000000000000000
+
+This package preserves the deployed contract source, deployment record, deployable ABI/bytecode, scripts, tests, and review evidence while omitting generated Hardhat artifacts, local secrets, caches, and the stale pre-deployment snapshot manifest.

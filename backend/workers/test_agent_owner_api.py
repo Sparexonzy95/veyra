@@ -166,7 +166,7 @@ class AgentOwnerApiTests(TestCase):
         task = qualification_task_for_connection(connection)
         files = [
             {
-                "path": "app.py",
+                "path": task["qualification_target_path"],
                 "content": (
                     'def health_response():\n'
                     '    return {"status": "ok", "service": "veyra-qualification", "version": 1}\n'
