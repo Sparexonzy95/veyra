@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: "https://api.veyra.surf/api/:path*",
+        destination: "https://api.veyra.surf/api/:path*/",
       },
     ];
   },
