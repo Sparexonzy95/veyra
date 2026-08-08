@@ -98,17 +98,16 @@ class AutomaticQualificationTests(TestCase):
         task = qualification_task_for_connection(self.connection)
         self.assertIsNotNone(task)
         self.assertEqual(task["type"], "automatic_qualification")
-        self.assertEqual(task["qualification_target_path"], "src/service.py")
-        self.assertEqual(task["allowed_submission_paths"], ["src/service.py"])
+        self.assertEqual(task["qualification_target_path"], "qualification/ready.txt")
+        self.assertEqual(task["allowed_submission_paths"], ["qualification/ready.txt"])
+        self.assertEqual(task["task_version"], "veyra-agent-readiness-v1")
         self.worker.refresh_from_db()
         self.assertEqual(self.worker.status, WorkerAgent.Status.TESTING)
         self.assertEqual(self.worker.provisioning_stage, "QUALIFICATION_RUNNING")
 
     def test_signed_passing_submission_activates_agent(self):
         task = qualification_task_for_connection(self.connection)
-        source = '''def health_response():
-    return {"status": "ok", "service": "veyra-qualification", "version": 1}
-'''
+        source = QUALIFICATION_SPECS["universal"]["expected"]
         api = APIClient()
         response = api.post(
             "/api/v1/agent-runtime/qualification/submit/",
@@ -125,9 +124,7 @@ class AutomaticQualificationTests(TestCase):
 
     def test_invalid_solution_fails_without_activating(self):
         task = qualification_task_for_connection(self.connection)
-        source = '''def health_response():
-    return {"status": "wrong"}
-'''
+        source = "NOT_THE_EXPECTED_READINESS_VALUE\n"
         api = APIClient()
         response = api.post(
             "/api/v1/agent-runtime/qualification/submit/",
@@ -143,15 +140,9 @@ class AutomaticQualificationTests(TestCase):
         run = WorkerQualificationRun.objects.get(id=task["id"])
         self.assertEqual(run.status, WorkerQualificationRun.Status.FAILED)
 
-    def test_declared_language_selects_versioned_controlled_target(self):
-        cases = {
-            "Python": "python",
-            "TypeScript": "javascript",
-            "Rust": "rust",
-            "Go": "go",
-            "Solidity": "solidity",
-        }
-        for language, spec_name in cases.items():
+    def test_all_declared_languages_use_the_same_universal_readiness_task(self):
+        spec = QUALIFICATION_SPECS["universal"]
+        for language in ["Python", "TypeScript", "Rust", "Go", "Solidity", "Elixir"]:
             with self.subTest(language=language):
                 WorkerQualificationRun.objects.filter(worker=self.worker).delete()
                 self.worker.languages = [language]
@@ -168,15 +159,17 @@ class AutomaticQualificationTests(TestCase):
                     ]
                 )
                 task = qualification_task_for_connection(self.connection)
-                spec = QUALIFICATION_SPECS[spec_name]
                 self.assertEqual(task["task_version"], spec["version"])
                 self.assertEqual(task["qualification_target_path"], spec["target_path"])
                 self.assertEqual(task["allowed_submission_paths"], [spec["target_path"]])
-                self.assertEqual(task["test_command"], spec["test_command"])
+                self.assertEqual(
+                    task["test_command"],
+                    "python -m unittest discover -s tests -q",
+                )
 
     def test_submission_for_old_app_py_target_is_rejected(self):
         task = qualification_task_for_connection(self.connection)
-        source = QUALIFICATION_SPECS["python"]["expected"]
+        source = QUALIFICATION_SPECS["universal"]["expected"]
         payload = self._signed_submission(task, source)
         payload["files"][0]["path"] = "app.py"
         api = APIClient()
@@ -187,4 +180,4 @@ class AutomaticQualificationTests(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {self.raw_credential}",
         )
         self.assertEqual(response.status_code, 409, response.data)
-        self.assertIn("src/service.py", str(response.data))
+        self.assertIn("qualification/ready.txt", str(response.data))

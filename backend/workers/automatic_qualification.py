@@ -24,7 +24,38 @@ from workers.models import (
 
 
 LEASE_SALT = "veyra.automatic-qualification.lease.v1"
+
+UNIVERSAL_QUALIFICATION_SPEC: dict[str, Any] = {
+    "version": "veyra-agent-readiness-v1",
+    "title": "Veyra universal agent readiness qualification",
+    "target_path": "qualification/ready.txt",
+    "starter": "NOT_READY\n",
+    "expected": "VEYRA_AGENT_READY_V1\n",
+    "support_files": [
+        {
+            "path": "tests/test_readiness.py",
+            "content": '''from pathlib import Path
+import unittest
+
+
+class ReadinessTest(unittest.TestCase):
+    def test_runtime_completed_controlled_task(self):
+        value = Path("qualification/ready.txt").read_text(encoding="utf-8").strip()
+        self.assertEqual(value, "VEYRA_AGENT_READY_V1")
+
+
+if __name__ == "__main__":
+    unittest.main()
+''',
+        },
+    ],
+    # Agent Starter is itself a Python service, so the stdlib unittest runner
+    # is always available. Qualification has no language/framework toolchain
+    # dependency such as pytest, Node, Cargo, Forge, or Hardhat.
+    "test_command": "python -m unittest discover -s tests -q",
+}
 QUALIFICATION_SPECS: dict[str, dict[str, Any]] = {
+    "universal": UNIVERSAL_QUALIFICATION_SPEC,
     "python": {
         "version": "python-health-v2",
         "title": "Veyra automatic Python qualification",
@@ -281,15 +312,11 @@ def _controlled_path(value: Any) -> str:
 
 
 def _qualification_spec_for_worker(worker: WorkerAgent) -> dict[str, Any]:
-    declared = [*list(worker.languages or []), *list(worker.skills or [])]
-    for value in declared:
-        key = re.sub(r"[^a-z0-9]+", "", str(value).casefold())
-        spec_name = QUALIFICATION_LANGUAGE_ALIASES.get(key)
-        if spec_name:
-            return QUALIFICATION_SPECS[spec_name]
-    raise AutomaticQualificationError(
-        "No controlled qualification is configured for this agent's declared languages."
-    )
+    # Qualification proves that the connected runtime can receive a controlled
+    # task, use its owner-paid model, write the permitted file, run a minimal
+    # built-in validation, sign the result, and return it to Veyra. Capability
+    # tags are used for job matching, not as qualification toolchain gates.
+    return UNIVERSAL_QUALIFICATION_SPEC
 
 
 def _qualification_spec_for_run(run: WorkerQualificationRun) -> dict[str, Any]:
