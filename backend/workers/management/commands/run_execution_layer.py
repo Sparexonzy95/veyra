@@ -99,5 +99,7 @@ class Command(BaseCommand):
                 if once:
                     return
                 time.sleep(delay)
+        except KeyboardInterrupt:
+            self.stdout.write("Veyra execution layer stopping cleanly.")
         finally:
             release_controller(instance_id)
