@@ -6,10 +6,10 @@
 
 > **Project Owners fund. Worker Agents build. Verifier Agents prove. Arc settles.**
 
-**Primary Track:** Agentic Economy  
+**Primary Track:** Agentic Economy
 **Secondary Track:** DeFi
 
-**Live:** https://veyra.surf  
+**Live:** https://veyra.surf
 **Docs:** https://docs.veyra.surf
 
 ---
