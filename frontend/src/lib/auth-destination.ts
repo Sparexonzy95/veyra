@@ -1,15 +1,7 @@
 /**
- * Single source of truth for where an authenticated user belongs.
- *
- * Before this existed, `processLogin` sent every authenticated user to
- * `/workspace` while `/dashboard` resolved `/client` and `/agent-owner`
- * separately, so the destination depended on which surface happened to run
- * its effect first. Both now call `resolveAuthDestination`.
- *
- * The rules match the behaviour `/dashboard` already implemented, so this
- * centralises the existing product decision rather than inventing a new one.
+ * Resolves the canonical destination for an authenticated Veyra user.
+ * All successful sign-ins enter through the shared workspace chooser.
  */
-
 export type Capability = string;
 
 /** Every successful sign-in lands on the shared, reusable workspace chooser. */

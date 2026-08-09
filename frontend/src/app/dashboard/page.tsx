@@ -7,13 +7,8 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 /**
- * Legacy `/dashboard` entry point.
- *
- * This used to branch on capabilities and drop a CLIENT user directly on
- * `/client`, which meant the destination after sign-in depended on which
- * surface ran its effect first. It now defers to `resolveAuthDestination`
- * like every other authenticated entry point, so every user lands on the
- * shared chooser and can reach either side of Veyra.
+ * Compatibility entry point for older dashboard URLs.
+ * Authenticated users are routed through the canonical Veyra destination resolver.
  */
 export default function LegacyDashboardRedirect() {
   const { me, sdkReady } = useVeyra();

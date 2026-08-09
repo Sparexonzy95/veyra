@@ -230,14 +230,7 @@ export const FOOTER = {
 } as const;
 
 /**
- * Footer socials.
- *
- * A platform is only clickable when a real, already-existing Veyra URL is
- * known. The GitHub entry is the project's own `origin` remote, which is
- * recorded in this repository's git configuration; nothing here is invented.
- *
- * Every other platform renders as a non-interactive badge. No `href="#"`,
- * no placeholder destinations and no follower or community claims.
+ * Official Veyra social links.
  */
 export const FOOTER_SOCIALS = [
   {

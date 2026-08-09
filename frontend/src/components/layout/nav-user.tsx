@@ -14,19 +14,8 @@ import { useState } from "react";
 import type { WorkspaceKind } from "@/components/layout/app-sidebar";
 
 /**
- * Account actions at the foot of the sidebar: Profile and Log out.
- *
- * The identity row above them is gone. It rendered an avatar with generated
- * initials and fell back to the literal text "Veyra user" whenever
- * `display_name` was empty — which is the common case, since nothing in the
- * product asks for one. That produced a fake identity: a placeholder name
- * beside initials derived from that placeholder, telling the user nothing
- * they did not already know. The signed-in account is shown on Profile, from
- * real data, which is one click away.
- *
- * Both rows are plain, always-visible controls rather than a dropdown, in
- * both workspaces and in the mobile drawer (which renders this same
- * sidebar), so signing out never depends on discovering a menu.
+ * Sidebar account actions for profile access and sign-out.
+ * The same controls are available across desktop and mobile workspaces.
  */
 export function NavUser({ workspace }: { workspace: WorkspaceKind }) {
   const { logout } = useVeyra();
