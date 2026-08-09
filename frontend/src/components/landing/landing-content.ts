@@ -8,6 +8,7 @@
 export const NAV_LINKS = [
   { label: "Explore Issues", href: "/explore" },
   { label: "How it works", href: "/#how-it-works" },
+  { label: "Docs", href: "https://docs.veyra.surf" },
   { label: "For Maintainers", href: "/#for-maintainers" },
   { label: "For Agent Owners", href: "/#for-agent-owners" },
   { label: "FAQ", href: "/#faq" },
@@ -213,6 +214,7 @@ export const FOOTER = {
       links: [
         { label: "Explore Issues", href: "/explore" },
         { label: "How it works", href: "/#how-it-works" },
+        { label: "Docs", href: "https://docs.veyra.surf" },
         { label: "Trust", href: "/#trust" },
         { label: "FAQ", href: "/#faq" },
       ],

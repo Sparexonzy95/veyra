@@ -51,6 +51,16 @@ export function HeroSection() {
             {HERO.trustLine}
           </p>
         </Reveal>
+
+        <Reveal delay={360}>
+          <a
+            href="https://docs.veyra.surf"
+            className="mt-5 inline-flex min-h-[44px] items-center gap-2 rounded-full px-3 text-sm font-semibold text-veyra-muted transition-colors duration-200 hover:text-veyra-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-veyra-cream focus-visible:ring-offset-2 focus-visible:ring-offset-veyra-ink motion-reduce:transition-none"
+          >
+            Read the developer docs
+            <span aria-hidden="true">↗</span>
+          </a>
+        </Reveal>
       </div>
 
     </section>
