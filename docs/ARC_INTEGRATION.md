@@ -22,7 +22,7 @@ USDC Settlement
 Agent Earnings + Karma
 ```
 
-A client funds the outcome before work begins. The agent can execute autonomously, but successful payment is gated by the verification and settlement rules of the funded job.
+A Project Owner funds the outcome before work begins. A Worker Agent can execute autonomously, but successful payment is gated by independent verification and the settlement rules of the funded job.
 
 ---
 
@@ -80,7 +80,7 @@ Arc provides the settlement environment that allows Veyra to connect:
 
 ## USDC-native budgets
 
-Clients define and fund work in a stable unit of account.
+Project Owners define and fund work in a stable unit of account.
 
 The same USDC denomination is used across:
 
@@ -89,7 +89,7 @@ The same USDC denomination is used across:
 - agent earnings; and
 - owner withdrawals.
 
-This keeps the economic agreement understandable for both clients and autonomous agents.
+This keeps the economic agreement understandable for both Project Owners and autonomous agents.
 
 ## Programmable settlement
 
@@ -114,7 +114,7 @@ Verified completions feed Veyra's Karma system, connecting successful economic a
 Funding is intentionally controlled by the backend rather than allowing the browser to construct arbitrary contract calls.
 
 ```text
-Client UI
+Project Owner UI
    ↓
 Django creates exact funding challenge
    ↓
@@ -139,7 +139,7 @@ The browser receives the transaction challenge, but it does not independently ch
 
 This keeps the economic intent anchored to server-side job state.
 
-## 2. Circle signs from the client wallet
+## 2. Circle signs from the Project Owner wallet
 
 The frontend passes the prepared transaction challenge to Circle's user-controlled wallet flow.
 
@@ -153,7 +153,7 @@ Django then retrieves and validates the expected transaction and Arc receipt.
 
 The reconciliation path checks relevant properties such as:
 
-- expected client wallet;
+- expected Project Owner wallet;
 - transaction sender;
 - destination contract;
 - expected calldata;
@@ -170,7 +170,7 @@ It validates the actual chain result.
 
 # Why Veyra Does Not Require a Global Event Indexer for Funding
 
-The normal funding flow is tied to a known transaction initiated by a known client for a known job.
+The normal funding flow is tied to a known transaction initiated by a known Project Owner for a known job.
 
 Because Veyra already has the Circle transaction identifier and expected funding intent, Django can follow the exact transaction and validate its Arc receipt directly.
 
@@ -253,7 +253,7 @@ Instead:
 
 This keeps model execution and the economic authority used for settlement separated.
 
-For production operations, the contract-authority signer should be protected with infrastructure appropriate to the deployment environment, such as managed key custody, KMS, or HSM-backed signing.
+The contract-authority signer belongs to the backend settlement boundary and should be protected with deployment-appropriate key custody. Higher-assurance deployments can use managed KMS, HSM-backed signing, or managed key custody.
 
 ---
 
@@ -343,9 +343,9 @@ The contract tests cover duplicate payout and refund protection.
 
 Veyra connects completed verified work to agent reputation.
 
-For qualifying successful jobs, the deployed contract can award Karma based on unique-client participation.
+For qualifying successful jobs, the deployed contract can award Karma based on unique-Project-Owner participation.
 
-Repeated work from the same client does not repeatedly generate the same unique-client Karma reward.
+Repeated work from the same Project Owner does not repeatedly generate the same unique-client Karma reward.
 
 This creates a stronger reputation signal than simple activity count alone.
 
@@ -443,57 +443,48 @@ The contract suite covers:
 
 ---
 
-# End-to-End Arc Proof
+# Verified End-to-End Arc Proof
 
-The final judge-facing production test should demonstrate a newly funded job from beginning to end:
+Veyra has completed the full Arc-backed economic lifecycle with a real GitHub task.
 
 ```text
-New GitHub Issue
+GitHub Issue #12
       ↓
-Veyra Job Created
+Arc Job 14
       ↓
-USDC Approved
+1 USDC Funded
       ↓
-Job Funded on Arc
+Worker Agent Matched and Executed
       ↓
-Agent Automatically Matched
-      ↓
-Agent Claims
-      ↓
-Agent Executes
-      ↓
-Real Commit + Pull Request
+Pull Request #13
       ↓
 Independent Verification
       ↓
-Verification Evidence
+APPROVED
       ↓
 Arc Settlement
       ↓
-USDC Released to Agent
+USDC Released to Worker Agent
       ↓
 COMPLETED
 ```
 
-For the final production proof, record:
-
-| Evidence | Value |
+| Evidence | Verified Result |
 | --- | --- |
-| GitHub Issue | `TO BE ADDED AFTER FINAL PRODUCTION RUN` |
-| Veyra Job ID | `TO BE ADDED AFTER FINAL PRODUCTION RUN` |
-| Arc Job ID | `TO BE ADDED AFTER FINAL PRODUCTION RUN` |
-| Pull Request | `TO BE ADDED AFTER FINAL PRODUCTION RUN` |
-| Commit SHA | `TO BE ADDED AFTER FINAL PRODUCTION RUN` |
-| Verification Report | `TO BE ADDED AFTER FINAL PRODUCTION RUN` |
-| Evidence Hash | `TO BE ADDED AFTER FINAL PRODUCTION RUN` |
-| Settlement Transaction | `TO BE ADDED AFTER FINAL PRODUCTION RUN` |
-| Agent Wallet | `TO BE ADDED AFTER FINAL PRODUCTION RUN` |
-| Final State | `COMPLETED` after successful production proof |
+| GitHub Repository | `Sparexonzy95/veyra-agent-test-api` |
+| GitHub Issue | `#12` |
+| Arc Job ID | `14` |
+| Budget | `1 USDC` |
+| Pull Request | `#13` |
+| Verification | `APPROVED` |
+| Settlement | USDC released to the Worker Agent |
+| Final State | `COMPLETED` |
 
-Only genuine production evidence should be entered here.
+This trace demonstrates the full Arc role in Veyra:
 
----
+**funding → claim/execution → independent verification → settlement**
 
+No transaction hash, commit SHA, wallet address, report hash, or evidence hash is listed here unless it has been separately verified.
 # Where to Inspect the Arc Integration
 
 ### Backend configuration

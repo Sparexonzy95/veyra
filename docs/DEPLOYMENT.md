@@ -2,9 +2,9 @@
 
 ## Deployment goal
 
-The production Veyra deployment should preserve the same end-to-end architecture that has already been validated locally while separating public web traffic from private autonomous runtime infrastructure.
+The Veyra deployment preserves the validated end-to-end architecture while separating public web traffic from private autonomous runtime infrastructure.
 
-The intended judge-facing layout is:
+The canonical hosted layout is:
 
 ```text
                          Public Internet
@@ -42,7 +42,7 @@ The core rule is simple:
 
 ---
 
-# Target deployment
+# Canonical deployment
 
 ## Public
 
@@ -60,15 +60,11 @@ Vercel
 
 ### Backend API
 
-Final target:
+Canonical API:
 
 ```text
 https://api.veyra.surf
 ```
-
-During initial VPS deployment and testing, Veyra may use a temporary SSL-enabled hostname such as an `sslip.io` address that resolves directly to the VPS.
-
-That temporary hostname should be treated as a deployment-validation endpoint, not the final product brand URL.
 
 ---
 
@@ -97,7 +93,7 @@ A reverse proxy such as Nginx or Caddy should expose only the backend HTTPS inte
 
 # Repository deployment map
 
-| Repository path | Production target |
+| Repository path | Hosted target |
 | --- | --- |
 | `frontend/` | Vercel |
 | `backend/` | VPS |
@@ -110,7 +106,7 @@ A reverse proxy such as Nginx or Caddy should expose only the backend HTTPS inte
 
 ---
 
-# Arc deployment used by production
+# Arc deployment
 
 | Component | Value |
 | --- | --- |
@@ -132,13 +128,13 @@ The deployment record is in:
 smart-contracts/deployments/arc-testnet.json
 ```
 
-Do not redeploy or change the production contract address as part of ordinary application deployment.
+Do not redeploy or change the configured contract address as part of ordinary application deployment.
 
 ---
 
 # Recommended deployment sequence
 
-Deploy in this order:
+For a new host or redeployment, use this order:
 
 ```text
 1. Provision VPS
@@ -151,20 +147,15 @@ Deploy in this order:
 8. Start Agent Starter
 9. Start verifier
 10. Configure reverse proxy + HTTPS
-11. Validate backend health through temporary HTTPS hostname
+11. Validate backend health
 12. Deploy frontend to Vercel
-13. Point frontend to production API
-14. Configure final CORS/CSRF/cookies
-15. Connect api.veyra.surf
-16. Run production health checks
-17. Run one fresh end-to-end job
-18. Record production proof
+13. Point frontend to https://api.veyra.surf
+14. Configure CORS/CSRF/cookies
+15. Run hosted health checks
+16. Reproduce the end-to-end job lifecycle if application behavior changed
 ```
 
-Do not start with the final live job before the production services are healthy.
-
----
-
+Do not run economic actions until the required services are healthy.
 # VPS requirements
 
 A Linux VPS should provide enough resources to run:
@@ -203,11 +194,11 @@ Because the Agent Starter supports multiple ecosystems, the final VPS may also n
 - Foundry;
 - Hardhat.
 
-Only install what is needed for the intended production/demo workload.
+Only install what is needed for the intended hosted workload.
 
 ---
 
-# Production users and service separation
+# Service users and process separation
 
 Do not run every Veyra process as root.
 
@@ -256,7 +247,7 @@ Example:
 
 ```bash
 sudo mkdir -p /opt/veyra
-sudo chown <deploy-user>:<deploy-user> /opt/veyra
+sudo chown \<deploy-user>:\<deploy-user> /opt/veyra
 ```
 
 The application should not depend on a machine-specific folder name.
@@ -267,17 +258,17 @@ The repository resolves paths relative to the project and does not depend on a m
 
 # Backend environment
 
-Create the production backend environment from:
+Create the hosted backend environment from:
 
 ```text
 backend/.env.example
 ```
 
-Store the real production file only on the host.
+Store the real environment file only on the host.
 
 Never commit it.
 
-Production values should cover the categories already expected by the application, including:
+Hosted values should cover the categories already expected by the application, including:
 
 - Django secret/configuration;
 - database;
@@ -295,9 +286,9 @@ Do not copy local development values blindly.
 
 ---
 
-# Django production settings
+# Django hosted settings
 
-Production Django configuration should include secure values appropriate to HTTPS deployment.
+Django configuration should include secure values appropriate to the HTTPS deployment.
 
 Review settings such as:
 
@@ -312,22 +303,18 @@ CSRF_COOKIE_SECURE
 SECURE_PROXY_SSL_HEADER
 ```
 
-Expected public origins after final domain setup:
+Canonical public origins:
 
 ```text
 https://veyra.surf
 https://api.veyra.surf
 ```
 
-If a temporary `sslip.io` API hostname is used during deployment validation, add only that exact HTTPS origin as needed for the temporary phase.
-
-Remove obsolete temporary origins after final cutover.
-
 ---
 
 # PostgreSQL
 
-Use PostgreSQL as the production database.
+Use PostgreSQL as the hosted database.
 
 Do not expose port `5432` publicly.
 
@@ -354,7 +341,7 @@ Use a strong password stored only in the host-managed environment.
 
 # Database migrations
 
-Before starting the production web service:
+Before starting the hosted web service:
 
 ```bash
 cd /opt/veyra/backend
@@ -369,7 +356,7 @@ Then run:
 
 Do not generate new migrations on the VPS as a substitute for fixing source-controlled model drift.
 
-Production deployment should apply committed migrations.
+Hosted deployment should apply committed migrations.
 
 ---
 
@@ -402,7 +389,7 @@ Avoid ad hoc dependency upgrades during deployment.
 
 # Django web process
 
-Run Django behind a production WSGI server.
+Run Django behind a WSGI server suitable for the hosted deployment.
 
 Use the Gunicorn configuration/command already aligned with the repository, including the command referenced by:
 
@@ -456,39 +443,6 @@ Use real certificate paths and hardened TLS configuration appropriate to the hos
 
 ---
 
-# Temporary sslip.io deployment endpoint
-
-For fast VPS validation, the backend can initially be exposed through an `sslip.io` hostname that resolves to the VPS IP.
-
-Example shape:
-
-```text
-https://api.<VPS-IP-WITH-DASHES>.sslip.io
-```
-
-The exact hostname depends on the VPS IP and chosen certificate/reverse-proxy setup.
-
-Use the temporary hostname to validate:
-
-- HTTPS;
-- Django routing;
-- login callbacks;
-- CORS;
-- CSRF;
-- frontend-to-backend requests;
-- Circle callbacks/flows where applicable;
-- GitHub callback configuration where applicable.
-
-Once the final domain is ready, migrate the frontend API configuration to:
-
-```text
-https://api.veyra.surf
-```
-
-and remove unnecessary temporary origins.
-
----
-
 # Frontend deployment on Vercel
 
 Set the Vercel project root to:
@@ -506,7 +460,7 @@ Install: npm ci
 Build:   npm run build
 ```
 
-Production environment variables should include the public values expected by the frontend, such as:
+Hosted environment variables should include the public values expected by the frontend, such as:
 
 ```text
 NEXT_PUBLIC_VEYRA_API_URL
@@ -523,25 +477,16 @@ Every `NEXT_PUBLIC_*` value is exposed to the browser.
 
 # Frontend API configuration
 
-During temporary VPS validation:
-
-```text
-NEXT_PUBLIC_VEYRA_API_URL=https://<temporary-ssl-host>
-```
-
-After final domain cutover:
+The canonical frontend API configuration is:
 
 ```text
 NEXT_PUBLIC_VEYRA_API_URL=https://api.veyra.surf
 ```
 
 Redeploy the frontend after changing public environment variables.
-
----
-
 # Google authentication
 
-Production Google OAuth settings must align with the final frontend/backend routes used by Veyra.
+Google OAuth settings must align with the canonical frontend/backend routes used by Veyra.
 
 Verify:
 
@@ -550,13 +495,13 @@ Verify:
 - frontend origin;
 - backend callback/redirect behavior.
 
-Do not leave production authentication dependent on `localhost`.
+Do not leave the hosted authentication flow dependent on `localhost`.
 
 ---
 
-# GitHub App production configuration
+# GitHub App hosted configuration
 
-Verify the GitHub App configuration against the production deployment.
+Verify the GitHub App configuration against the hosted deployment.
 
 Review:
 
@@ -569,11 +514,11 @@ Review:
 
 Do not change application permissions during the final hackathon deployment unless the current proven flow requires it.
 
-A production callback must point to the actual deployed Veyra route, not a stale local URL.
+The hosted callback must point to the deployed Veyra route, not a stale local URL.
 
 ---
 
-# Circle production/testnet configuration
+# Circle hosted/testnet configuration
 
 Veyra uses Circle wallet infrastructure in distinct roles.
 
@@ -581,7 +526,7 @@ Client funding uses the supported user-controlled wallet flow.
 
 Agent economic activity uses dedicated developer-controlled wallets.
 
-Backend production configuration must preserve the exact wallet behavior already validated by the application.
+Backend hosted configuration must preserve the wallet behavior already validated by the application.
 
 Do not expose Circle credentials in the frontend unless they are explicitly public client identifiers expected by the browser SDK.
 
@@ -611,13 +556,13 @@ Its responsibilities include:
 
 Run it under a process supervisor such as systemd.
 
-Do not run duplicate unmanaged copies during production testing.
+Do not run duplicate unmanaged controller copies.
 
 ---
 
 # Agent Starter
 
-The default production experience uses a Veyra-hosted Agent Starter runtime.
+The default hosted experience uses a Veyra-hosted Agent Starter runtime.
 
 Recommended binding:
 
@@ -669,9 +614,7 @@ The current Arc Testnet contract requires configured authority for owner-only se
 
 That signer belongs to the backend's settlement boundary, not the coding model or verifier.
 
-For a hackathon VPS, protect the key as a server-only secret with strict file permissions.
-
-For a hardened production environment, prefer managed signing infrastructure such as:
+Protect the key as a server-only secret with strict file permissions. Higher-assurance deployments can use managed signing infrastructure such as:
 
 - KMS;
 - HSM;
@@ -742,7 +685,7 @@ Recommended host-managed environment files:
 
 Permissions should restrict access to the service user/root.
 
-Do not place production `.env` files in a world-readable directory.
+Do not place hosted environment files in a world-readable directory.
 
 Do not commit them.
 
@@ -795,7 +738,7 @@ Do not point autonomous workspaces at:
 ```text
 /etc
 /root
-/home/<unrelated-user>
+/home/\<unrelated-user>
 /opt/veyra/.git
 ```
 
@@ -836,12 +779,6 @@ After reverse proxy configuration:
 curl -fsS https://api.veyra.surf/api/health/
 ```
 
-During temporary hostname validation:
-
-```bash
-curl -fsS https://<temporary-ssl-host>/api/health/
-```
-
 ## Internal Agent Starter
 
 From the VPS:
@@ -860,7 +797,7 @@ curl -fsS http://127.0.0.1:9200/veyra/health
 
 ## PostgreSQL
 
-Verify the application can connect using the configured production database credentials.
+Verify the application can connect using the configured database credentials.
 
 Do not expose a database health endpoint publicly.
 
@@ -906,15 +843,15 @@ Then connect the frontend and verify:
 
 # CORS, CSRF, and cookies
 
-Production frontend/backend separation means these settings matter.
+Frontend/backend origin separation means these settings matter.
 
-The final trusted frontend origin should be:
+The canonical trusted frontend origin is:
 
 ```text
 https://veyra.surf
 ```
 
-The backend origin should be:
+The canonical backend origin is:
 
 ```text
 https://api.veyra.surf
@@ -929,22 +866,33 @@ Credentialed requests require the backend to use the correct combination of:
 - proxy HTTPS awareness;
 - SameSite configuration appropriate to the final architecture.
 
-Do not use wildcard credentialed CORS in production.
+Do not use wildcard credentialed CORS.
 
 ---
 
-# Final production regression
+# Hosted regression and reference proof
 
-After deployment, run the health checks first.
+After a deployment or meaningful runtime change, run health checks first and then reproduce the economic lifecycle as needed.
 
-Then run one fresh real job.
-
-The production proof must be:
+The verified reference trace for the current Veyra build is:
 
 ```text
-New GitHub Issue
+GitHub Repository: Sparexonzy95/veyra-agent-test-api
+GitHub Issue: #12
+Arc Job: 14
+Budget: 1 USDC
+Pull Request: #13
+Verification: APPROVED
+Settlement: USDC released to the Worker Agent
+Final State: COMPLETED
+```
+
+This reference demonstrates the full lifecycle:
+
+```text
+GitHub Issue
       ↓
-New Veyra Job
+Veyra Job
       ↓
 USDC Funding on Arc
       ↓
@@ -952,66 +900,18 @@ Automatic Agent Matching
       ↓
 Autonomous Execution
       ↓
-Real Commit
-      ↓
 Real Pull Request
       ↓
 Independent Verification
       ↓
-Verification Evidence
-      ↓
 Arc Settlement
       ↓
-USDC Released to Agent
+USDC Released to Worker Agent
       ↓
 COMPLETED
 ```
 
-Do not use:
-
-- manual database advancement;
-- manual assignment;
-- manual claim;
-- fabricated PRs;
-- fabricated verification;
-- fabricated settlement.
-
----
-
-# Evidence to record after deployment
-
-Capture:
-
-| Evidence | Value |
-| --- | --- |
-| Frontend URL | `https://veyra.surf` after final cutover |
-| Backend API | `https://api.veyra.surf` after final cutover |
-| GitHub Issue | |
-| Veyra Job ID | |
-| Arc Job ID | |
-| Assigned Agent | |
-| Agent Wallet | |
-| Pull Request | |
-| Commit SHA | |
-| Verification Verdict | |
-| Verification Report Hash | |
-| Evidence Hash | |
-| Settlement Transaction | |
-| Final State | `COMPLETED` |
-
-Then update:
-
-```text
-README.md
-JUDGES.md
-docs/ARC_INTEGRATION.md
-docs/DEMO.md
-```
-
-with the genuine production evidence.
-
----
-
+Do not use manual database advancement, fabricated pull requests, fabricated verification, or fabricated settlement as substitutes for the actual workflow.
 # Rollback strategy
 
 Deployment should be reversible.
@@ -1057,7 +957,7 @@ runtime private identities
 
 The repository should contain only safe `.env.example` templates.
 
-Production values belong in the host's secret-management boundary.
+Hosted secret values belong in the host's secret-management boundary.
 
 ---
 
@@ -1072,9 +972,9 @@ https://agent.veyra.surf
 https://verifier.veyra.surf
 ```
 
-unless a future product requirement explicitly needs a hardened authenticated public runtime interface.
+unless a deliberate hardened product requirement calls for an authenticated public runtime interface.
 
-For the current production architecture, keep them private.
+For the current architecture, keep them private.
 
 ---
 
@@ -1082,7 +982,7 @@ For the current production architecture, keep them private.
 
 External agent owners may operate their own Agent Starter as an optional advanced mode.
 
-That deployment is separate from the Veyra-hosted judge-facing runtime.
+That deployment is separate from the default Veyra-hosted runtime.
 
 An external owner is responsible for their own:
 
@@ -1099,7 +999,7 @@ The Veyra-hosted runtime remains the default product experience.
 
 # Deployment success criteria
 
-A production deployment is ready for judging when:
+The hosted deployment is healthy when:
 
 ```text
 [ ] veyra.surf loads over HTTPS

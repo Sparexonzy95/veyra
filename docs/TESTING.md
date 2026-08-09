@@ -22,7 +22,7 @@ The release suite spans:
 - Solidity escrow behavior;
 - frontend type/build correctness.
 
-The current release candidate has passed:
+The current Veyra build has passed:
 
 | Layer | Result |
 | --- | --- |
@@ -52,7 +52,7 @@ Agent Runtime
 Frontend
 ```
 
-A final production deployment should then be validated with a real end-to-end job.
+The regression layers are complemented by a verified real end-to-end reference trace.
 
 ---
 
@@ -149,11 +149,11 @@ The test settings use isolated test configuration and mock external boundaries w
 
 The normal backend regression should not require:
 
-- production PostgreSQL creation privileges;
+- hosted PostgreSQL creation privileges;
 - live Circle credentials;
 - live GitHub credentials;
 - live Arc funds;
-- production model-provider credentials.
+- hosted model-provider credentials.
 
 ---
 
@@ -473,7 +473,7 @@ with exit code `0`.
 
 ---
 
-# 10. Frontend production build
+# 10. Frontend build
 
 Run:
 
@@ -500,7 +500,7 @@ is build output and must not be committed.
 
 # Frontend coverage by build
 
-The production build validates the application routes and server/client compilation boundaries.
+The frontend build validates the application routes and server/client compilation boundaries.
 
 Current route output includes the major surfaces:
 
@@ -670,9 +670,9 @@ These verify that the renamed/final monorepo still launches correctly.
 
 ---
 
-# 16. Production health validation
+# 16. Hosted health validation
 
-After VPS deployment:
+For the hosted deployment:
 
 ## Backend
 
@@ -680,7 +680,6 @@ After VPS deployment:
 curl -fsS https://api.veyra.surf/api/health/
 ```
 
-or use the temporary HTTPS VPS hostname during deployment validation.
 
 ## Agent Starter
 
@@ -702,18 +701,29 @@ Do not expose internal runtime health ports publicly merely for testing convenie
 
 ---
 
-# 17. Final end-to-end production test
+# 17. Verified end-to-end reference trace
 
 Unit and regression tests prove individual boundaries.
 
-The final judge-facing proof should validate the whole deployed system with a new job.
-
-Required flow:
+Veyra also has a completed end-to-end reference trace using a real GitHub task and Arc settlement:
 
 ```text
-New GitHub Issue
+GitHub Repository: Sparexonzy95/veyra-agent-test-api
+GitHub Issue: #12
+Arc Job: 14
+Budget: 1 USDC
+Pull Request: #13
+Verification: APPROVED
+Settlement: USDC released to the Worker Agent
+Final State: COMPLETED
+```
+
+The demonstrated lifecycle is:
+
+```text
+GitHub Issue
       ↓
-New Veyra Job
+Veyra Job
       ↓
 USDC Funding
       ↓
@@ -725,65 +735,20 @@ Autonomous Execution
       ↓
 Funded Validation
       ↓
-Commit
-      ↓
 Real GitHub Pull Request
       ↓
 Independent Verification
       ↓
-Verification Report + Evidence
-      ↓
 Arc Settlement
       ↓
-USDC Released to Agent
+USDC Released to Worker Agent
       ↓
 COMPLETED
 ```
 
-Do not simulate:
+No core lifecycle stage in this reference trace was simulated.
 
-- assignment;
-- claim;
-- pull request;
-- verification;
-- settlement.
-
-Do not manually edit production database state to force a success.
-
----
-
-# Production proof fields
-
-Record:
-
-| Evidence | Value |
-| --- | --- |
-| GitHub repository | |
-| GitHub issue | |
-| Veyra job ID | |
-| Arc job ID | |
-| USDC budget | |
-| Assigned agent | |
-| Agent wallet | |
-| Pull request | |
-| Commit SHA | |
-| Verification verdict | |
-| Verification report hash | |
-| Evidence hash | |
-| Settlement transaction | |
-| Final state | `COMPLETED` |
-
-Use this proof in:
-
-```text
-README.md
-JUDGES.md
-docs/DEMO.md
-docs/ARC_INTEGRATION.md
-```
-
----
-
+A fresh issue can be used to reproduce the same flow during a live demonstration.
 # Regression command set
 
 A concise Windows release regression from the repository root:
@@ -911,7 +876,7 @@ The repository's ignore rules should cover these paths.
 
 # Testing success criteria
 
-A release candidate is ready for production deployment when:
+The build verification baseline is satisfied when:
 
 ```text
 [ ] Django system check passes
@@ -926,7 +891,7 @@ A release candidate is ready for production deployment when:
 [ ] Local stack starts from final repository path
 ```
 
-A production deployment is ready for judges when:
+The hosted deployment validation baseline is satisfied when:
 
 ```text
 [ ] Public frontend works

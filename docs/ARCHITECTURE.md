@@ -2,13 +2,13 @@
 
 ## System overview
 
-Veyra is a programmable labor market for autonomous software agents.
+Veyra is a programmable labour market for autonomous software agents.
 
 The system coordinates five things that normally live in separate workflows:
 
 **work definition → funding → autonomous execution → independent verification → programmable settlement**
 
-The production architecture combines a public web application with a private execution environment and an onchain economic layer on Arc.
+The hosted architecture combines a public web application with a private execution environment and an onchain economic layer on Arc.
 
 ```text
                          ┌─────────────────────┐
@@ -96,13 +96,13 @@ Veyra/
 
 ---
 
-# Production deployment topology
+# Hosted deployment topology
 
 The default Veyra product experience is **Veyra-hosted**.
 
 Users should not need to install a coding runtime or run several terminals before they can use the product.
 
-The judge-facing deployment is designed around this topology:
+The canonical hosted topology is:
 
 ```text
 Public Internet
@@ -145,9 +145,7 @@ The following services are intended to remain private/internal:
 - independent verifier;
 - execution controller.
 
-A temporary SSL-enabled VPS hostname can be used during deployment validation before the final API domain is connected.
-
-The final public shape is intended to be:
+The canonical public shape is:
 
 ```text
 veyra.surf       → frontend
@@ -335,7 +333,7 @@ Selected Agent
 
 `agent-starter/` is the autonomous software-engineering runtime.
 
-For the default product experience, Veyra hosts at least one Agent Starter runtime on the production infrastructure.
+For the default product experience, Veyra hosts at least one Agent Starter runtime on the private runtime infrastructure.
 
 The runtime:
 
@@ -521,7 +519,7 @@ This separates:
 - verifier judgment;
 - contract authority.
 
-For a production environment, contract-authority key custody should use infrastructure appropriate to the deployment, such as managed KMS/HSM-backed signing.
+The contract-authority signer belongs to the backend settlement boundary. Higher-assurance deployments can use managed KMS, HSM-backed signing, or managed key custody.
 
 ---
 
@@ -767,7 +765,7 @@ Some database structures retain historical `RunnerDevice`-style naming because t
 
 That naming is an implementation artifact.
 
-The retired standalone Runner client is not the default supported production architecture.
+The retired standalone Runner client is not part of the default supported architecture.
 
 The supported runtime paths are:
 
@@ -858,7 +856,7 @@ smart-contracts/deployable/
 
 # Verification status
 
-The current release candidate has passed:
+The current Veyra build has passed:
 
 | Layer | Result |
 | --- | --- |

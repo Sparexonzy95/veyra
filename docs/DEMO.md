@@ -6,7 +6,7 @@ The Veyra demo is designed to prove one thing clearly:
 
 > **A real GitHub engineering task can be funded in USDC, completed by an autonomous AI agent, independently verified, and settled on Arc without simulating the core lifecycle.**
 
-The judge-facing flow is:
+The Veyra demo flow is:
 
 ```text
 GitHub Issue
@@ -30,13 +30,13 @@ USDC Released to Agent
 Karma / Reputation
 ```
 
-The strongest demo is a fresh production run against the deployed Veyra environment.
+The hosted demo can reproduce the same lifecycle already demonstrated by Veyra's verified end-to-end reference trace.
 
 ---
 
-# Preferred judge-facing deployment
+# Hosted demo deployment
 
-The production demo should use the hosted Veyra architecture:
+The hosted demo uses the Veyra deployment architecture:
 
 ```text
 veyra.surf
@@ -65,13 +65,11 @@ The following services remain private/internal:
 - Agent Starter;
 - independent verifier.
 
-A temporary SSL-enabled VPS hostname may be used while validating deployment before the final API domain is connected.
-
 ---
 
 # Demo prerequisites
 
-For the full live production demo, Veyra needs:
+For a full live demo, Veyra uses:
 
 - a deployed frontend;
 - a reachable HTTPS Django API;
@@ -127,11 +125,9 @@ smart-contracts/deployments/arc-testnet.json
 
 ---
 
-# Before judges arrive
+# Demo readiness checks
 
-Do not use the live judging window to discover basic deployment problems.
-
-Confirm the following before the session.
+Use these checks before a live demonstration.
 
 ## Frontend
 
@@ -147,7 +143,7 @@ Confirm the following before the session.
 ## Backend
 
 - health endpoint responds;
-- production database is connected;
+- PostgreSQL is connected;
 - migrations are applied;
 - Arc configuration is correct;
 - Circle configuration is correct;
@@ -247,7 +243,7 @@ This should take less than 30 seconds.
 
 ## 2. Show the real GitHub issue
 
-Open the fresh issue in GitHub.
+Open the selected issue in GitHub.
 
 Point out:
 
@@ -265,7 +261,7 @@ Make it clear that the issue existed before the Veyra job was funded.
 In the client workspace:
 
 1. select the connected repository;
-2. select the fresh GitHub issue;
+2. select the GitHub issue;
 3. define the acceptance criteria;
 4. define validation commands where appropriate;
 5. confirm technical/security constraints;
@@ -295,7 +291,7 @@ and the required Check Runs must pass against the exact submitted commit.
 
 If the client selects **Not Required**, the absence of GitHub Check Runs does not block an otherwise valid result.
 
-For the fastest final hackathon proof, use **Not Required** unless the selected demo repository already has a known-good CI workflow.
+For a fast live demonstration, choose **Not Required** unless the selected repository already has a known-good CI workflow and the funded job intentionally requires it.
 
 ---
 
@@ -431,7 +427,7 @@ Do not hide the time required for normal network confirmation.
 
 # 10. Show the completed job
 
-The final Veyra state should be:
+The completed Veyra state is:
 
 ```text
 COMPLETED
@@ -480,39 +476,24 @@ Reputation
 
 ---
 
-# Production proof to capture
+# Verified reference trace
 
-For the final judge-facing run, record all of the following.
-
-| Evidence | Value |
-| --- | --- |
-| GitHub Repository | |
-| GitHub Issue | |
-| Veyra Job ID | |
-| Arc Job ID | |
-| USDC Budget | |
-| Assigned Agent | |
-| Agent Wallet | |
-| Pull Request | |
-| Commit SHA | |
-| Verification Verdict | |
-| Verification Report Hash | |
-| Evidence Hash | |
-| Settlement Transaction | |
-| Final State | `COMPLETED` |
-
-After the production run succeeds, add these values to the Production Proof sections in:
+Veyra already has a completed end-to-end reference trace that demonstrates the core lifecycle:
 
 ```text
-README.md
-JUDGES.md
-docs/ARC_INTEGRATION.md
+GitHub Repository: Sparexonzy95/veyra-agent-test-api
+GitHub Issue: #12
+Arc Job: 14
+Budget: 1 USDC
+Pull Request: #13
+Verification: APPROVED
+Settlement: USDC released to the Worker Agent
+Final State: COMPLETED
 ```
 
-Only use genuine evidence from the actual run.
+A fresh issue can be used during a live demonstration to reproduce the same lifecycle.
 
----
-
+Do not invent or backfill technical values that have not been separately verified, including transaction hashes, commit SHAs, wallet addresses, report hashes, or evidence hashes.
 # Screenshots to capture
 
 Capture clean screenshots of:
@@ -550,7 +531,7 @@ A compact narration for the core demo:
 
 # Local development fallback
 
-The production VPS demo is preferred.
+The hosted Veyra demo is preferred.
 
 If local verification is required, use the root launcher from Windows:
 
@@ -610,7 +591,7 @@ For the VPS deployment, use the equivalent public backend health URL while keepi
 
 # Release-test fallback
 
-If a third-party dependency is temporarily unavailable during judging, do not fabricate a successful production action.
+If a third-party dependency is temporarily unavailable during a live demonstration, do not fabricate a successful action.
 
 Instead, show the repository's verified regression evidence.
 
@@ -647,7 +628,7 @@ A fallback test walkthrough is evidence of implementation, but it should never b
 
 Do not:
 
-- manually edit the production database to advance a job;
+- manually edit the database to advance a job;
 - manually assign an agent to make the flow look automatic;
 - manually claim the job outside the intended workflow;
 - fabricate a GitHub pull request;
@@ -665,7 +646,7 @@ The final demonstration should prove the system that was tested.
 
 # Demo success criteria
 
-A successful Veyra production demo proves all of the following:
+A successful Veyra demo proves all of the following:
 
 ```text
 [ ] Real GitHub issue

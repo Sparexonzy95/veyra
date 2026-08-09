@@ -73,7 +73,7 @@ database passwords
 runtime identities
 runtime private signing keys
 wallet signing material
-production logs containing secrets
+hosted logs containing secrets
 local databases
 temporary workspaces
 ```
@@ -112,7 +112,7 @@ The coding agent does not verify its own work.
 
 The verifier uses a distinct runtime role and identity.
 
-Recommended production separation includes:
+Recommended hosted separation includes:
 
 - separate runtime identity;
 - separate model-provider credentials;
@@ -141,9 +141,7 @@ It should never be exposed to:
 - GitHub repository content;
 - user-controlled request payloads.
 
-For a hackathon VPS, the key must remain a server-only secret with strict filesystem permissions.
-
-For hardened production use, move this signing authority into managed infrastructure such as:
+The key must remain a server-only secret with strict filesystem permissions. Higher-assurance deployments can move this signing authority into managed infrastructure such as:
 
 - KMS;
 - HSM;
@@ -239,7 +237,7 @@ The runtime should not execute directly inside:
 
 Job workspaces should be disposable and outside web roots and secret locations.
 
-Example production location:
+Example hosted location:
 
 ```text
 /var/lib/veyra/workspaces
@@ -435,7 +433,7 @@ The accounting boundary is important because autonomous agents may require walle
 
 # Database security
 
-Production uses PostgreSQL.
+The hosted deployment uses PostgreSQL.
 
 The database should not be exposed publicly.
 
@@ -462,7 +460,7 @@ Do not use database superuser credentials for normal application traffic.
 
 # VPS service isolation
 
-Production services should run as non-root users.
+Hosted services should run as non-root users.
 
 Recommended separation:
 
@@ -505,7 +503,7 @@ Private:
 
 The execution controller does not need a public listening port.
 
-Do not expose Agent Starter or verifier health/runtime ports publicly unless a future hardened architecture explicitly requires it.
+Do not expose Agent Starter or verifier health/runtime ports publicly unless a deliberate hardened architecture explicitly requires it.
 
 ---
 
@@ -513,7 +511,7 @@ Do not expose Agent Starter or verifier health/runtime ports publicly unless a f
 
 The backend should sit behind HTTPS.
 
-Production Django configuration should use secure settings appropriate to a reverse-proxy deployment.
+Hosted Django configuration should use secure settings appropriate to a reverse-proxy deployment.
 
 Review:
 
@@ -529,7 +527,7 @@ SECURE_PROXY_SSL_HEADER
 
 Use HSTS after confirming HTTPS is correctly configured.
 
-Do not use wildcard credentialed CORS for production.
+Do not use wildcard credentialed CORS.
 
 ---
 
@@ -548,8 +546,6 @@ https://api.veyra.surf
 ```
 
 Only allow required origins.
-
-Temporary `sslip.io` deployment origins may be added while validating the VPS and should be removed when no longer needed.
 
 ---
 
@@ -577,14 +573,14 @@ Use structured logging, rotation, and retention appropriate to the host.
 
 A passing test suite does not mean every dependency is permanently safe.
 
-Before a hardened production launch:
+Ongoing dependency security practice includes:
 
-- review dependency advisories;
-- plan patch cadence;
-- remove unused dependencies;
-- lock dependency versions;
-- review transitive risk;
-- test upgrades before production rollout.
+- reviewing dependency advisories;
+- maintaining a patch cadence;
+- removing unused dependencies;
+- locking dependency versions;
+- reviewing transitive risk;
+- testing upgrades before hosted rollout.
 
 Do not perform broad dependency upgrades immediately before a hackathon demo simply to silence non-blocking deprecation warnings.
 
@@ -616,13 +612,13 @@ Current release result:
 45 passing
 ```
 
-A passing test suite is strong implementation evidence, but it is not a substitute for an independent production audit.
+A passing test suite is strong implementation evidence, but it is not a substitute for an independent security audit.
 
 ---
 
 # Backup and recovery
 
-Before a production release:
+Before a hosted release:
 
 - back up PostgreSQL;
 - preserve the previously working application release;
@@ -638,7 +634,7 @@ If an offchain process fails after a chain transaction, reconcile chain state be
 
 # Incident response
 
-A production security plan should define what to do if:
+The incident-response plan should define what to do if:
 
 - a model-provider key leaks;
 - a GitHub App key leaks;
@@ -663,7 +659,7 @@ At minimum, prepare to:
 
 # Security verification checklist
 
-Before judge-facing production use:
+Verify:
 
 ```text
 [ ] No tracked .env files

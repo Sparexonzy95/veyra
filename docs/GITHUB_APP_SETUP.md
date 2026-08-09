@@ -89,7 +89,7 @@ POST /api/v1/client/github/app/install/start/
 The backend returns a GitHub App installation URL in this form:
 
 ```text
-https://github.com/apps/<GITHUB_APP_SLUG>/installations/new?state=<signed-state>
+https://github.com/apps/\<GITHUB_APP_SLUG>/installations/new?state=\<signed-state>
 ```
 
 The `state` value is short-lived and signed.
@@ -135,7 +135,7 @@ Examples:
 Local:
 http://localhost:3000/client/github/callback
 
-Production:
+Hosted:
 https://veyra.surf/client/github/callback
 ```
 
@@ -228,7 +228,7 @@ The **Setup URL** is the critical callback for the installation flow.
 http://localhost:3000/client/github/callback
 ```
 
-### Production
+### Hosted
 
 ```text
 https://veyra.surf/client/github/callback
@@ -254,13 +254,11 @@ Veyra's backend webhook endpoint is:
 /api/v1/client/github/app/webhook/
 ```
 
-Production shape:
+Hosted webhook URL:
 
 ```text
 https://api.veyra.surf/api/v1/client/github/app/webhook/
 ```
-
-During temporary VPS validation, use the corresponding HTTPS backend hostname.
 
 For local development, the backend requires an HTTPS tunnel or equivalent externally reachable endpoint if GitHub needs to deliver real webhook events.
 
@@ -318,7 +316,7 @@ The backend requires GitHub App configuration.
 | Variable | Purpose |
 | --- | --- |
 | `GITHUB_APP_ID` | Numeric GitHub App ID used when creating the App JWT |
-| `GITHUB_APP_SLUG` | Exact slug from `github.com/apps/<slug>` |
+| `GITHUB_APP_SLUG` | Exact slug from `github.com/apps/\<slug>` |
 | `GITHUB_APP_PRIVATE_KEY` | RSA private key value for GitHub App authentication |
 | `GITHUB_APP_PRIVATE_KEY_PATH` | Alternative path to the RSA private key |
 | `GITHUB_WEBHOOK_SECRET` | Secret used to verify GitHub webhook signatures |
@@ -350,13 +348,13 @@ Do not commit the actual private key.
 Example shape:
 
 ```text
-https://github.com/apps/<slug>
+https://github.com/apps/\<slug>
 ```
 
 The backend uses the slug to construct:
 
 ```text
-https://github.com/apps/<slug>/installations/new
+https://github.com/apps/\<slug>/installations/new
 ```
 
 If the slug is missing, the installation URL cannot be constructed correctly.
@@ -497,9 +495,9 @@ For example:
 localhost
 ```
 
-while testing production, or a stale temporary deployment hostname after final cutover.
+while testing the hosted environment, or a stale deployment hostname.
 
-Update the GitHub App configuration to match the actual judge-facing frontend.
+Update the GitHub App configuration to match the canonical frontend.
 
 ---
 
@@ -693,9 +691,9 @@ Do not log the webhook secret.
 
 ---
 
-# Production deployment
+# Hosted deployment
 
-The final intended public configuration is:
+The canonical public configuration is:
 
 ```text
 Frontend:
@@ -711,19 +709,14 @@ GitHub Webhook URL:
 https://api.veyra.surf/api/v1/client/github/app/webhook/
 ```
 
-During initial VPS deployment, a temporary HTTPS backend hostname may be used before `api.veyra.surf` is connected.
-
-When switching from the temporary endpoint to the final domain:
+When hosted configuration changes:
 
 1. update backend environment configuration;
 2. update CORS/CSRF configuration as required;
-3. update frontend API configuration;
-4. update GitHub webhook URL if it changed;
+3. update frontend API configuration if the backend origin changed;
+4. update the GitHub webhook URL if it changed;
 5. verify the Setup URL still points to the correct frontend;
-6. test a fresh installation round trip.
-
----
-
+6. test the installation round trip.
 # Local development
 
 Frontend:
@@ -750,9 +743,9 @@ Do not require a public tunnel for the ordinary browser Setup URL when the brows
 
 ---
 
-# Production verification checklist
+# Hosted verification checklist
 
-Before the final judge-facing demo, verify:
+Verify:
 
 ```text
 [ ] GITHUB_APP_ID configured
@@ -775,9 +768,9 @@ Before the final judge-facing demo, verify:
 
 ---
 
-# Judge-facing proof
+# GitHub proof in the Veyra demo
 
-During the final Veyra demo, the GitHub integration should make several facts visible.
+During the Veyra demo, the GitHub integration makes several facts visible.
 
 ## Before execution
 
