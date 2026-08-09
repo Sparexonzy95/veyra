@@ -246,8 +246,4 @@ export const FOOTER_SOCIALS = [
     icon: "github",
     href: "https://github.com/Sparexonzy95/veyra",
   },
-  { id: "x", label: "Veyra on X, coming soon", icon: "x", href: null },
-  { id: "discord", label: "Veyra Discord, coming soon", icon: "discord", href: null },
-  { id: "telegram", label: "Veyra Telegram, coming soon", icon: "telegram", href: null },
-  { id: "linkedin", label: "Veyra on LinkedIn, coming soon", icon: "linkedin", href: null },
 ] as const;

@@ -220,7 +220,7 @@ def _validation_commands(item: WorkerJobQueueItem) -> tuple[str, ...]:
             raise WorkerExecutionError(
                 "validation_policy",
                 (
-                    "Phase 3 currently allows only committed Pytest commands. "
+                    "This execution path accepts only committed Pytest commands. "
                     f"Unsupported command: {normalized}"
                 ),
             )
