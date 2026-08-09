@@ -3140,18 +3140,33 @@ class Handler(BaseHTTPRequestHandler):
         expired = int(state.get("token_expires_at") or 0) <= int(time.time())
         expiry_label = connection_link_expiry(state)
         link = "Connected to Veyra" if connected else connection_link(state)
+
         status_label = "Connected" if connected else ("Link expired" if expired else "Ready to connect")
         status_class = "ok" if connected and ready else "warn" if not ready or expired else "ready"
+
         safe_link = html.escape(link)
+        safe_agent_name = html.escape(str(state.get("agent_name") or "Veyra agent"))
         safe_provider = html.escape(f"{AI_PROVIDER} · {AI_MODEL}")
         safe_message = html.escape(provider_message)
+        runtime_role = html.escape(RUNTIME_ROLE.title())
+        runtime_id = html.escape(str(state["runtime_id"]))
+        heartbeat_at = html.escape(str(state.get("last_heartbeat_at") or "Not connected"))
         heartbeat_error = html.escape(str(state.get("last_heartbeat_error") or "None"))
-        qualification_status = html.escape(str(state.get("qualification_status") or "waiting"))
-        qualification_message = html.escape(str(state.get("qualification_message") or "Waiting for Veyra"))
-        job_status = html.escape(str(state.get("job_status") or "waiting"))
-        job_message = html.escape(str(state.get("job_message") or "Waiting for paid work"))
+
+        qualification_status = html.escape(
+            str(state.get("qualification_status") or "waiting").replace("_", " ").title()
+        )
+        qualification_message = html.escape(
+            str(state.get("qualification_message") or "Waiting for Veyra")
+        )
+        job_status = html.escape(
+            str(state.get("job_status") or "waiting").replace("_", " ").title()
+        )
+        job_message = html.escape(
+            str(state.get("job_message") or "Waiting for paid work")
+        )
         verification_status = html.escape(
-            str(state.get("verification_status") or "waiting")
+            str(state.get("verification_status") or "waiting").replace("_", " ").title()
         )
         verification_message = html.escape(
             str(
@@ -3159,37 +3174,173 @@ class Handler(BaseHTTPRequestHandler):
                 or "Waiting for a submitted worker job"
             )
         )
-        runtime_role = html.escape(RUNTIME_ROLE.title())
+
+        favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Crect width='120' height='120' rx='26' fill='%23F5EDE2'/%3E%3Cpath d='M24 27h18l18 49 18-49h18L68 94H52L24 27Z' fill='%23050505'/%3E%3C/svg%3E"
+
+        if connected:
+            connection_panel = f"""
+            <div class='connected-state'>
+              <span class='state-dot'></span>
+              <div class='connected-copy'>
+                <strong>Connected to Veyra</strong>
+                <span>{safe_agent_name}</span>
+              </div>
+              <a class='manage-link' href='https://veyra.surf/agent-owner' target='_blank' rel='noreferrer'>Manage in Veyra ↗</a>
+            </div>
+            """
+        else:
+            connection_panel = f"""
+            <div class='link-box'>
+              <code id='link'>{safe_link}</code>
+              <span class='expiry'>{'Expired' if expired else 'Expires'} <time id='link-expiry'>{html.escape(expiry_label)}</time></span>
+            </div>
+            <div class='actions'>
+              <button id='copy-button' class='primary' onclick='copyLink()'>Copy connection link</button>
+              <button class='secondary' onclick='rotateLink()'>Generate new link</button>
+            </div>
+            """
+
         body = f"""<!doctype html>
-<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>Veyra Hosted Agent</title>
+<html lang='en'>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<meta name='theme-color' content='#050505'>
+<link rel='icon' type='image/svg+xml' href=\"{favicon}\">
+<title>Veyra Agent Runtime</title>
 <style>
-body{{font-family:Inter,Segoe UI,Arial,sans-serif;background:#071018;color:#edf7f4;margin:0;padding:40px}}
-main{{max-width:820px;margin:auto}} .card{{background:#0d1b24;border:1px solid #203541;border-radius:18px;padding:24px;margin:18px 0}}
-h1{{margin:0 0 8px}} p{{color:#a9bec7;line-height:1.6}} code{{display:block;word-break:break-all;background:#071018;padding:16px;border-radius:12px;border:1px solid #203541;color:#b8ffe7}}
-button{{background:#39d99a;color:#03110c;border:0;border-radius:10px;padding:12px 18px;font-weight:700;cursor:pointer;margin-right:8px}}
-button.secondary{{background:#203541;color:#edf7f4}} .pill{{display:inline-block;padding:6px 10px;border-radius:999px;background:#17303a;font-size:13px}}
-.ok{{color:#65efb6}} .warn{{color:#ffc76b}} .ready{{color:#8fd5ff}} dl{{display:grid;grid-template-columns:180px 1fr;gap:10px}} dt{{color:#7993a0}} dd{{margin:0}}
-</style></head><body><main>
-<h1>Veyra Hosted {runtime_role}</h1><p>The owner-paid AI key stays on this server. Copy only the connection link into Veyra.</p>
-<div class='card'><span class='pill {status_class}'>{status_label}</span><h2>Connection link</h2><code id='link'>{safe_link}</code><br>
-<p>Expires at: <time id='link-expiry'>{html.escape(expiry_label)}</time></p>
-<button onclick='copyLink()' {'disabled' if connected else ''}>Copy Veyra connection link</button>
-<button class='secondary' onclick='rotateLink()' {'disabled' if connected else ''}>Generate new link</button></div>
-<div class='card'><h2>Runtime status</h2><dl>
-<dt>Runtime role</dt><dd>{runtime_role}</dd>
-<dt>AI provider</dt><dd>{safe_provider}</dd><dt>Provider readiness</dt><dd class='{'ok' if ready else 'warn'}'>{safe_message}</dd>
-<dt>Runtime ID</dt><dd>{html.escape(str(state['runtime_id']))}</dd><dt>Last heartbeat</dt><dd>{html.escape(str(state.get('last_heartbeat_at') or 'Not connected'))}</dd>
-<dt>Heartbeat error</dt><dd>{heartbeat_error}</dd>
-<dt>Qualification</dt><dd>{qualification_status}</dd>
-<dt>Qualification detail</dt><dd>{qualification_message}</dd>
-<dt>Paid job</dt><dd>{job_status}</dd><dt>Job detail</dt><dd>{job_message}</dd>
-<dt>Independent verification</dt><dd>{verification_status}</dd>
-<dt>Verification detail</dt><dd>{verification_message}</dd></dl></div>
+:root{{--ink:#050505;--raised:#15110e;--cream:#f5ede2;--cream2:#fff9f1;--sand:#c4ad8d;--muted:#aa9a88;--line:rgba(245,237,226,.12);--soft:rgba(245,237,226,.055)}}
+*{{box-sizing:border-box}}
+html{{background:var(--ink)}}
+body{{margin:0;min-height:100vh;background:radial-gradient(circle at 82% 0%,rgba(196,173,141,.10),transparent 28rem),var(--ink);color:var(--cream);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
+a{{color:inherit}}
+.shell{{width:min(900px,calc(100% - 32px));margin:0 auto;padding:28px 0 42px}}
+.nav{{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:40px}}
+.brand{{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:760}}
+.mark{{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--cream)}}
+.mark svg{{width:21px;height:21px}}
+.nav-links{{display:flex;align-items:center;gap:7px}}
+.nav-link{{display:inline-flex;align-items:center;min-height:36px;padding:0 11px;border:1px solid var(--line);border-radius:999px;color:var(--muted);text-decoration:none;font-size:12px;font-weight:700}}
+.nav-link:hover{{color:var(--cream);background:var(--soft)}}
+.heading{{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:18px}}
+.heading h1{{margin:0;font-size:clamp(30px,5vw,44px);line-height:1;letter-spacing:-.04em;font-weight:720}}
+.heading p{{margin:8px 0 0;color:var(--muted);font-size:13px}}
+.badges{{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}}
+.pill{{display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--soft);font-size:11px;font-weight:760}}
+.pill:before{{content:"";width:6px;height:6px;border-radius:999px;background:currentColor}}
+.ok{{color:#b8e5c5}} .warn{{color:#efc884}} .ready{{color:var(--sand)}}
+.panel{{border:1px solid var(--line);border-radius:18px;background:rgba(21,17,14,.78)}}
+.connect{{padding:20px}}
+.section-label{{display:block;margin-bottom:11px;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}}
+.connected-state{{display:flex;align-items:center;gap:12px;min-height:72px;padding:14px;border:1px solid rgba(184,229,197,.16);border-radius:13px;background:rgba(184,229,197,.04)}}
+.state-dot{{flex:none;width:9px;height:9px;border-radius:999px;background:#b8e5c5;box-shadow:0 0 0 5px rgba(184,229,197,.07)}}
+.connected-copy{{min-width:0;flex:1}}
+.connected-copy strong{{display:block;font-size:14px}}
+.connected-copy span{{display:block;margin-top:3px;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.manage-link{{flex:none;display:inline-flex;align-items:center;min-height:36px;padding:0 12px;border:1px solid var(--line);border-radius:999px;color:var(--cream);text-decoration:none;font-size:11px;font-weight:760}}
+.manage-link:hover{{background:var(--soft)}}
+.link-box{{position:relative}}
+code{{display:block;min-height:76px;padding:16px 16px 32px;border:1px solid var(--line);border-radius:13px;background:#080706;color:#e3d2bb;font:600 12px/1.5 "SFMono-Regular",Consolas,monospace;word-break:break-all;white-space:pre-wrap}}
+.expiry{{position:absolute;left:16px;bottom:9px;color:var(--muted);font-size:10px}}
+.actions{{display:flex;gap:9px;margin-top:11px}}
+button{{appearance:none;border:0;min-height:40px;padding:0 15px;border-radius:999px;font:750 12px/1 Inter,ui-sans-serif,system-ui;cursor:pointer}}
+.primary{{background:var(--cream);color:var(--ink)}}
+.secondary{{background:transparent;color:var(--cream);border:1px solid var(--line)}}
+.status{{margin-top:12px;padding:18px}}
+.status-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}}
+.stat{{padding:13px;border:1px solid rgba(245,237,226,.09);border-radius:13px;background:rgba(5,5,5,.2)}}
+.stat-label{{display:block;color:var(--muted);font-size:9px;font-weight:760;letter-spacing:.06em;text-transform:uppercase}}
+.stat-value{{display:block;margin-top:6px;color:var(--cream2);font-size:13px;font-weight:700;word-break:break-word}}
+details{{margin-top:12px;border:1px solid var(--line);border-radius:14px;background:rgba(13,11,9,.66)}}
+summary{{cursor:pointer;list-style:none;padding:14px 16px;color:var(--muted);font-size:11px;font-weight:720}}
+summary::-webkit-details-marker{{display:none}}
+summary:after{{content:"+";float:right;color:var(--sand)}}
+details[open] summary:after{{content:"–"}}
+.detail-body{{border-top:1px solid var(--line);padding:14px 16px}}
+dl{{display:grid;grid-template-columns:145px 1fr;gap:8px 14px;margin:0;font-size:11px;line-height:1.5}}
+dt{{color:var(--muted)}} dd{{margin:0;color:var(--cream);word-break:break-word}}
+.footer{{margin-top:16px;color:#75695c;font-size:10px;text-align:center}}
+@media(max-width:760px){{.heading{{display:block}}.badges{{justify-content:flex-start;margin-top:13px}}.status-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}.connected-state{{align-items:flex-start;flex-wrap:wrap}}.manage-link{{margin-left:21px}}}}
+@media(max-width:520px){{.shell{{width:min(100% - 20px,900px);padding-top:16px}}.nav{{margin-bottom:28px}}.brand span:last-child{{display:none}}.heading h1{{font-size:34px}}.status-grid{{grid-template-columns:1fr}}.actions{{flex-direction:column}}button{{width:100%}}dl{{grid-template-columns:1fr;gap:3px}}dd{{margin-bottom:7px}}.manage-link{{width:100%;justify-content:center;margin-left:0}}}}
+</style>
+</head>
+<body>
+<!-- veyra-runtime-console-v3 -->
+<main class='shell'>
+  <nav class='nav'>
+    <div class='brand'>
+      <span class='mark' aria-hidden='true'><svg viewBox='0 0 120 120'><path d='M24 27h18l18 49 18-49h18L68 94H52L24 27Z' fill='#050505'/></svg></span>
+      <span>Veyra Runtime</span>
+    </div>
+    <div class='nav-links'>
+      <a class='nav-link' href='https://docs.veyra.surf/docs/agent-runtime/overview' target='_blank' rel='noreferrer'>Docs ↗</a>
+      <a class='nav-link' href='https://veyra.surf/agent-owner' target='_blank' rel='noreferrer'>Open Veyra ↗</a>
+    </div>
+  </nav>
+
+  <header class='heading'>
+    <div>
+      <h1>Agent Runtime</h1>
+      <p>{'Runtime connected to Veyra.' if connected else 'Connect this runtime to Veyra.'}</p>
+    </div>
+    <div class='badges'>
+      <span class='pill {status_class}'>{status_label}</span>
+      <span class='pill {'ok' if ready else 'warn'}'>{'Provider ready' if ready else 'Provider issue'}</span>
+    </div>
+  </header>
+
+  <section class='panel connect'>
+    <span class='section-label'>Connection</span>
+    {connection_panel}
+  </section>
+
+  <section class='panel status'>
+    <span class='section-label'>Status</span>
+    <div class='status-grid'>
+      <div class='stat'><span class='stat-label'>Provider</span><span class='stat-value'>{'Ready' if ready else 'Check'}</span></div>
+      <div class='stat'><span class='stat-label'>Qualification</span><span class='stat-value'>{qualification_status}</span></div>
+      <div class='stat'><span class='stat-label'>Paid job</span><span class='stat-value'>{job_status}</span></div>
+      <div class='stat'><span class='stat-label'>Verification</span><span class='stat-value'>{verification_status}</span></div>
+    </div>
+  </section>
+
+  <details>
+    <summary>Runtime details</summary>
+    <div class='detail-body'>
+      <dl>
+        <dt>Role</dt><dd>{runtime_role}</dd>
+        <dt>Provider / model</dt><dd>{safe_provider}</dd>
+        <dt>Provider detail</dt><dd>{safe_message}</dd>
+        <dt>Runtime ID</dt><dd>{runtime_id}</dd>
+        <dt>Last heartbeat</dt><dd>{heartbeat_at}</dd>
+        <dt>Heartbeat error</dt><dd>{heartbeat_error}</dd>
+        <dt>Qualification detail</dt><dd>{qualification_message}</dd>
+        <dt>Job detail</dt><dd>{job_message}</dd>
+        <dt>Verification detail</dt><dd>{verification_message}</dd>
+      </dl>
+    </div>
+  </details>
+
+  <footer class='footer'>Veyra Agent Runtime · Protocol v{PROTOCOL_VERSION}</footer>
+</main>
 <script>
-async function copyLink(){{const text=document.getElementById('link').innerText;await navigator.clipboard.writeText(text);alert('Connection link copied');}}
-async function rotateLink(){{const r=await fetch('/veyra/connect/rotate',{{method:'POST'}});const j=await r.json();if(!r.ok){{alert(j.detail||'Could not rotate link');return}}document.getElementById('link').innerText=j.connection_link;document.getElementById('link-expiry').innerText=j.expires_at;}}
-</script></main></body></html>"""
+async function copyLink(){{
+  const button=document.getElementById('copy-button');
+  const link=document.getElementById('link');
+  if(!button||!link)return;
+  await navigator.clipboard.writeText(link.innerText);
+  const previous=button.innerText;
+  button.innerText='Copied';
+  setTimeout(()=>button.innerText=previous,1200);
+}}
+async function rotateLink(){{
+  const r=await fetch('/veyra/connect/rotate',{{method:'POST'}});
+  const j=await r.json();
+  if(!r.ok){{window.alert(j.detail||'Could not generate a new link');return;}}
+  window.location.reload();
+}}
+</script>
+</body></html>"""
         raw = body.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -3197,7 +3348,6 @@ async function rotateLink(){{const r=await fetch('/veyra/connect/rotate',{{metho
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(raw)
-
 
 def main() -> None:
     ensure_heartbeat_thread()
