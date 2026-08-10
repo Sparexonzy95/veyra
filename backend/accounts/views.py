@@ -183,7 +183,12 @@ class MeView(APIView):
                 'authenticated': True,
                 'user': {'id': request.user.id, 'display_name': request.user.display_name, 'email': request.user.email},
                 'capabilities': capabilities,
-                'wallet': {'address': wallet.address, 'blockchain': wallet.blockchain} if wallet else None,
+                'wallet': {
+                    'address': wallet.address,
+                    'blockchain': wallet.blockchain,
+                    'usdc_balance': str(wallet.last_usdc_balance),
+                    'last_balance_sync_at': wallet.last_balance_sync_at,
+                } if wallet else None,
             })
         pending = get_pending_from_request(request)
         return Response({'authenticated': False, 'onboarding': bool(pending), 'requires_wallet_setup': bool(pending)})
